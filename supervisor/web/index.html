@@ -96,9 +96,17 @@ addEventListener("blur", () => { for (const c of held) send({ key: c, down: fals
 const BUTTONS = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "select", "start", "l3", "r3",
                  "up", "down", "left", "right", "home"];
 const AXES = ["lx", "ly", "rx", "ry"];
-let last = {};
+let last = {}, skipped = "";
 function poll() {
-  const pad = [...navigator.getGamepads()].find((p) => p && p.connected);
+  // Not the simulator's own gamepad: on Linux the container's virtual "Alia Pad Gamepad" shows
+  // up on the PC too, and reading it back fed every press in again (B stuck down). And only
+  // the standard mapping (by position); another one would put the buttons in the wrong places.
+  const pads = [...navigator.getGamepads()].filter((p) => p && p.connected && !/alia pad/i.test(p.id));
+  const pad = pads.find((p) => p.mapping === "standard");
+  const odd = pads.find((p) => p.mapping !== "standard");
+  const note = !pad && odd ? (zh ? `手柄“${odd.id}”的按键布局浏览器不认识，没有使用` :
+                                  `Gamepad "${odd.id}": the browser doesn't know its layout; not used`) : "";
+  if (note !== skipped) { skipped = note; status.textContent = note || T.connected; }
   const now = {};
   if (pad) {
     BUTTONS.forEach((b, i) => { if (pad.buttons[i]) now[b] = pad.buttons[i].pressed; });

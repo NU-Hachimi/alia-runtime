@@ -5,7 +5,13 @@ on:
 
 jobs:
   image:
-    runs-on: ubuntu-24.04
+    # both architectures, each on its own kind of machine (no emulation): x86_64 PCs, and
+    # arm64 ones (Apple Silicon through Docker Desktop, arm64 Linux)
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       # alia-sdk from alia-devkit's main until the image pins a release (image/versions.txt)

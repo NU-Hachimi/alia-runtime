@@ -1,0 +1,46 @@
+# A tag vX.Y.Z publishes the image for both architectures under one name, so Docker picks
+# the PC's own: ghcr.io/nu-hachimi/alia-runtime:X.Y.Z and :<platform> (what acart run pulls,
+# the cart's [cart] platform, image/versions.txt). Released together with alia-sdk (the
+# image pins it), only when the user says so.
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/nu-hachimi/alia-runtime
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo modprobe uinput && sudo chmod 666 /dev/uinput
+      - run: IMAGE=$IMAGE:${GITHUB_REF_NAME#v}-${{ matrix.arch }} image/build.sh   # the pinned alia-sdk release
+      - run: tests/run.sh $IMAGE:${GITHUB_REF_NAME#v}-${{ matrix.arch }}
+      - run: tests/browser.sh $IMAGE:${GITHUB_REF_NAME#v}-${{ matrix.arch }}
+      - run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - run: docker push $IMAGE:${GITHUB_REF_NAME#v}-${{ matrix.arch }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: one name for both architectures
+        run: |
+          . image/versions.txt
+          v=${GITHUB_REF_NAME#v}
+          docker buildx imagetools create -t $IMAGE:$v -t $IMAGE:$PLATFORM $IMAGE:$v-amd64 $IMAGE:$v-arm64
