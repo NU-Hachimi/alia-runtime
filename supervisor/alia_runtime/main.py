@@ -27,7 +27,7 @@ from pathlib import Path
 from alia import cart as cartlib
 from alia import runtime
 
-from . import keys, pads, swayipc
+from . import keys, pads, swayipc, wlkeys
 from .uinput import AXIS_MAX, AXIS_MIN, Gamepad
 
 log = logging.getLogger("alia-runtime")
@@ -339,12 +339,18 @@ class Supervisor:
             self.events.put(("key", parts[0] == "press", parts[1], " ".join(parts[2:])))
 
     def read_keys(self):
+        """The keyboard, key by key (wlkeys: an overlay surface with the keyboard)."""
+        table = keys.actions()
+
+        def on_key(name, pressed):
+            for action in table.get(name, ()):
+                self.key_line(f"{'press' if pressed else 'release'} {action}")
         try:
-            for command in swayipc.Sway(self.swaysock).bindings():
-                if command.startswith("nop alia "):
-                    self.key_line(command[len("nop alia "):])
-        except ConnectionError:
+            wlkeys.run(f"{RUN}/wayland-0", on_key)
+        except (ConnectionError, OSError):
             pass  # sway is gone: we're shutting down
+        except RuntimeError as e:
+            log.warning("keyboard: %s", e)
 
     def control(self):
         """/run/alia-rt/control: the same lines as the key bindings, one per connection line,

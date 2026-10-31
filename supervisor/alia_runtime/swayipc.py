@@ -1,11 +1,10 @@
-"""Just enough of sway's IPC: commands, and the binding events our key bindings produce."""
+"""Just enough of sway's IPC: commands (switching workspaces for the overlay)."""
 import json
 import socket
 import struct
 
 MAGIC = b"i3-ipc"
-RUN_COMMAND, SUBSCRIBE = 0, 2
-EVENT_BINDING = 0x80000005
+RUN_COMMAND = 0
 
 
 class Sway:
@@ -34,12 +33,3 @@ class Sway:
     def command(self, cmd: str):
         self._send(RUN_COMMAND, cmd)
         return self._read()[1]
-
-    def bindings(self):
-        """Yields the command of every binding that runs ("nop alia press button east")."""
-        self._send(SUBSCRIBE, '["binding"]')
-        self._read()
-        while True:
-            kind, ev = self._read()
-            if kind == EVENT_BINDING and ev.get("change") == "run":
-                yield ev["binding"]["command"]

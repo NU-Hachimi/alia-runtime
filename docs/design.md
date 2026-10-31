@@ -62,7 +62,7 @@ host                                container (alia-runtime)
 Wayland 合成器  ◄── 一个窗口 ───────  sway（嵌套，WLR_BACKENDS=wayland）
                                      ├─ 卡带（uid 1000，/cart 只读，/save，/cache）
                                      └─ 浮层：暂停画面、快捷菜单（layer-shell）
-键盘 → sway 的按键绑定 ─────────►  supervisor ──uinput──► 虚拟 "Alia Pad Gamepad"（1P）
+键盘 → sway → overlay 表面 ──────►  supervisor ──uinput──► 虚拟 "Alia Pad Gamepad"（1P）
 真手柄 /dev/input ───────────────►  supervisor ──uinput──► 虚拟 "Alia Pad Gamepad 2"…
 PipeWire ◄── socket ─────────────── 卡带的声音（media.role = Game）
 /dev/dri ────────────────────────► Mesa（GPU）
@@ -81,7 +81,7 @@ PipeWire ◄── socket ─────────────── 卡带�
 ## 5. 输入
 
 - **虚拟手柄**：supervisor 在容器里经 `/dev/uinput` 创建和掌机同样 ID 的 "Alia Pad Gamepad"，所以 `runtime.toml` 里的 SDL 映射原样生效，卡带看到的手柄和掌机上一模一样。
-- **键盘**：sway 的按键绑定把键盘交给 supervisor（游戏收不到键盘事件，和掌机一样只有手柄）。默认映射：
+- **键盘**：supervisor 在 sway 的 overlay 层放一个看不见的 1×1 表面，独占键盘，逐个键收到按下和松开（游戏收不到键盘事件，和掌机一样只有手柄）。不用 sway 的按键绑定：绑定按"当前按住的整组键"匹配，松开只认最后按下的那个键，按住 W 再按别的键，W 的松开就丢了。键名经合成器给的键盘布局（libxkbcommon）换算，和引擎直接运行时 SDL 的键名含义一致。默认映射（`runtime.toml` 的 `[keyboard]`）：
 
   | 键 | 掌机 |
   |---|---|
