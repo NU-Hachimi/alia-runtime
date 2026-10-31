@@ -19,6 +19,26 @@ acart run mygame --lang en --browser            # 浏览器模式：画面和手
 - 不模拟硬件外设：电池、温度、倾斜之类。这些是系统开发者的内部模拟器管的。
 - 不跑 `.acart` 的签名和安装流程。运行的是卡带目录（开发中的形态）。
 
+### 1.1 开发者怎么用
+
+**不需要推送**：卡带目录直接挂进容器（只读的 `/cart`），改完文件重新 `acart run` 就是新版本。
+
+```bash
+pip install alia-sdk                  # 一次：得到 acart
+acart run mygame                      # 第一次会拉镜像（几百 MB），以后秒开
+#   窗口里玩；H 是 Home（挂起、"已暂停"），长按 H 是快捷菜单（继续、退出、语言）
+#   卡带的输出打在终端里；关窗口或在快捷菜单里退出，容器就结束
+acart run mygame --fresh              # 用一个空存档目录
+acart run mygame --lang en            # 换系统语言
+```
+
+- **Python 卡带**：改了直接重跑。
+- **原生卡带**：在 x86_64 的电脑上要先编一份 x86_64 的放进卡带目录（引擎已经同时发布两种架构的模块）；在 arm64 的电脑上（Apple Silicon 的 Mac）直接用给掌机编的那份。
+- **存档**留在电脑上（`~/.local/share/alia-runtime/saves/<id>`），下次运行还在，和掌机上的存档互不相干。
+- **用引擎的**：`alia run` 调用 `acart run`，用法不变。
+
+**到真机上**还是原来的路：`acart --board push DIR --launch`（开发机）或者 `acart pack` 后 `acart --board install`。模拟器和真机读的是同一个卡带目录，中间不用转换。
+
 ## 2. 和掌机一致的规则从哪来
 
 卡带的运行规则只有一处来源：alia-sdk 里的 `alia/runtime.toml`（路径、环境变量、超时、挂起信号、声音格式、手柄映射），和平台基线 `alia/platform.toml` 放在一起。掌机的启动器和这里的镜像都读它。镜像构建时装固定版本的 alia-sdk，所以**镜像版本决定了规则版本**。这个仓库不另抄规则。
@@ -67,14 +87,16 @@ PipeWire ◄── socket ─────────────── 卡带�
   |---|---|
   | 方向键 | 十字键 |
   | `X` / `Z` | A（右） / B（下） |
-  | `S` / `A` | X（上） / Y（左） |
-  | `Q` / `W` | L / R |
-  | `1` / `2` | L2 / R2 |
+  | `C` / `V` | X（上） / Y（左） |
+  | `E` / `Q` | L / L2 |
+  | `U` / `O` | R / R2 |
+  | `W A S D` | 左摇杆（按住 Shift 推一半） |
+  | `I J K L` | 右摇杆 |
+  | `F` / `N` | L3 / R3 |
   | `Enter` / `Backspace` | START / SELECT |
-  | `Esc` | Home（长按：快捷菜单） |
-  | `I J K L` | 左摇杆 |
+  | `H` | Home（长按：快捷菜单） |
 
-  布局按位置排（`X` 在 `Z` 的右边，`S` 在 `A` 的上面），可以用 `--keys FILE` 换。
+  和系统开发者的控制面板同一套（参照 Ryujinx 等电脑模拟器的习惯：左手左摇杆和左肩键，右手右摇杆和右肩键），可以用 `--keys FILE` 换。
 - **真手柄**：电脑上的手柄（`/dev/input`，只读挂进容器）由 supervisor 用 SDL3 读，按位置转发。**电脑上的第一个手柄是 1P**，替代键盘；再多的排 2P、3P，规则和掌机以后接外置手柄一样（`runtime.toml`，alia-inputd 的规划）。Xbox 手柄的 A 在下面，在 Alia Pad 上就是 B，窗口标题栏显示当前按下的掌机按键，避免误会。
 - **没有 uinput 权限时**：`acart run` 提前检查，给出一行 udev 规则。大部分发行版已经给登录用户开了 uinput 的权限（uaccess）。
 
@@ -123,6 +145,6 @@ tests/            在 CI 里跑一张测试卡带：启动、按键、挂起、�
 
 ## 12. 待定
 
-- 默认键位要不要和引擎 `alia run` 现在的键位统一（先问引擎侧）。
+- 引擎 `alia run` 现在的键位如果不同，统一成上面这套（已问引擎侧）。
 - 浮层用什么画：倾向用 Python 加一个很小的 layer-shell 客户端，不引入 Qt。
 - 镜像大小：预计压缩后 300–400 MB（Mesa 和 LLVM 占大头）。
