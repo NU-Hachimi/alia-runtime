@@ -45,7 +45,7 @@ class Supervisor:
         self.uid = int(os.environ.get("ALIA_RT_UID", "1000"))
         self.gid = int(os.environ.get("ALIA_RT_GID", "1000"))
         self.lang = os.environ.get("ALIA_RT_LANG", "en")
-        w, _, h = os.environ.get("ALIA_RT_SIZE", "1280x720").partition("x")
+        w, _, h = os.environ.get("ALIA_RT_SIZE", "x".join(map(str, RULES["display"]["size"]))).partition("x")
         self.size = (int(w), int(h))
         self.args = json.loads(os.environ.get("ALIA_RT_ARGS", "[]"))
         self.state_file = os.environ.get("ALIA_RT_STATE")
@@ -123,13 +123,38 @@ class Supervisor:
                "WAYLAND_DISPLAY": "wayland-0", "SDL_VIDEODRIVER": "wayland"}
         if os.environ.get("LIBGL_ALWAYS_SOFTWARE"):
             env["LIBGL_ALWAYS_SOFTWARE"] = "1"
-        if os.environ.get("ALIA_RT_NO_AUDIO") or not os.path.exists(f"{RUN}/pipewire-0"):
-            env["SDL_AUDIO_DRIVER"] = "dummy"  # acart run --no-audio, or no PipeWire on this PC
+        if os.environ.get("ALIA_RT_NO_AUDIO") or not self.audio_works(env):
+            env["SDL_AUDIO_DRIVER"] = "dummy"  # acart run --no-audio, or this PC's sound doesn't work
         content = CART / "content"
         argv = self.cart.command(self.args, root=CART)
         log.info("starting %s: %s", self.cart.id, " ".join(argv))
         self.proc = subprocess.Popen(argv, env=env, cwd=content if content.is_dir() else CART,
                                      start_new_session=True, **self.as_user())
+
+    def audio_works(self, env: dict) -> bool:
+        """The system promises a sink that never blocks an open (runtime.toml [audio]). The
+        PC's PipeWire can be stuck (seen after a laptop's sleep): try an open first, in a
+        child we can kill, and give the cart silence if it hangs."""
+        if not os.path.exists(f"{RUN}/pipewire-0"):
+            log.warning("no PipeWire on this PC: the cart runs silent")
+            return False
+        a = RULES["audio"]
+        probe = ("import ctypes,sys\n"
+                 "s=ctypes.CDLL('libSDL3.so.0')\n"
+                 "s.SDL_Init.argtypes=[ctypes.c_uint32]\n"
+                 "s.SDL_OpenAudioDeviceStream.restype=ctypes.c_void_p\n"
+                 "s.SDL_OpenAudioDeviceStream.argtypes=[ctypes.c_uint32,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p]\n"
+                 "spec=(ctypes.c_int*3)(0x8120,%d,%d)\n"
+                 "sys.exit(0 if s.SDL_Init(0x10) and s.SDL_OpenAudioDeviceStream(0xFFFFFFFF,spec,None,None) else 1)\n"
+                 % (a["channels"], a["rate"]))
+        try:
+            ok = subprocess.run(["python3", "-c", probe], env=env, timeout=3, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, **self.as_user()).returncode == 0
+        except subprocess.TimeoutExpired:
+            ok = False
+        if not ok:
+            log.warning("this PC's sound doesn't open (PipeWire stuck?): the cart runs silent")
+        return ok
 
     # ---- the cart's process group
     def signal(self, sig):
