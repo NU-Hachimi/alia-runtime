@@ -1,0 +1,9 @@
+[cart]
+id      = "pad.alia.runtime.test"
+title   = "alia-runtime test"
+version = "0.0.1"
+
+[runtime]
+type  = "python"
+entry = "main.py"
+pause = "game"          # so the test sees SIGUSR1 / SIGUSR2 too

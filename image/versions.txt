@@ -1,0 +1,1 @@
+ALIA_SDK=0.2.0   # alia-sdk release in the image (its runtime.toml is the rules)
