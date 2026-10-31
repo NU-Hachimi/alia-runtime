@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alia Pad simulator</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; color: #ccc; font: 14px system-ui, sans-serif; overflow: hidden; }
+  canvas { position: absolute; inset: 0; margin: auto; max-width: 100%; max-height: 100%; aspect-ratio: 16 / 9; image-rendering: auto; }
+  #start { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+           gap: 12px; background: rgba(0, 0, 0, 0.75); cursor: pointer; text-align: center; }
+  #start b { font-size: 22px; color: #fff; }
+  #status { position: absolute; left: 10px; bottom: 8px; color: #777; font-size: 12px; }
+</style>
+</head>
+<body>
+<canvas id="screen" width="1280" height="720"></canvas>
+<div id="start"><b id="start-title"></b><span id="start-hint"></span></div>
+<div id="status"></div>
+<script>
+"use strict";
+// The Alia Pad simulator in a browser (alia-runtime, docs/design.md §7). The picture and the
+// sound come down one WebSocket; the keyboard (by key position) and gamepads go up.
+const zh = navigator.language.startsWith("zh");
+const T = zh ? { title: "点击开始", hint: "键盘和手柄都可以用；声音要先点一下才能播放",
+                 connecting: "正在连接模拟器…", connected: "已连接", closed: "模拟器已结束" }
+             : { title: "Click to start", hint: "Keyboard and gamepads both work; sound needs a click first",
+                 connecting: "Connecting to the simulator…", connected: "Connected", closed: "The simulator has ended" };
+document.getElementById("start-title").textContent = T.title;
+document.getElementById("start-hint").textContent = T.hint;
+const status = document.getElementById("status");
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d");
+let ws = null, ended = false;
+
+// ---- sound: s16le stereo 48 kHz in, through a small ring buffer in an AudioWorklet
+let audio = null, port = null;
+const WORKLET = `
+class Pcm extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Float32Array(48000 * 2); this.r = 0; this.w = 0;
+    this.port.onmessage = (e) => { const s = new Int16Array(e.data);
+      for (let i = 0; i < s.length; i++) { this.buf[this.w] = s[i] / 32768; this.w = (this.w + 1) % this.buf.length; }
+      const ahead = (this.w - this.r + this.buf.length) % this.buf.length;
+      if (ahead > 48000 * 2 * 0.25) this.r = ((this.w - 5760 + this.buf.length) % this.buf.length) & ~1; }; }
+  process(_in, out) { const l = out[0][0], r = out[0][1];
+    for (let i = 0; i < l.length; i++) { if (this.r === this.w) { l[i] = r[i] = 0; continue; }
+      l[i] = this.buf[this.r]; r[i] = this.buf[this.r + 1]; this.r = (this.r + 2) % this.buf.length; }
+    return true; } }
+registerProcessor("pcm", Pcm);`;
+async function startAudio() {
+  if (audio) return;
+  audio = new AudioContext({ sampleRate: 48000 });
+  await audio.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" })));
+  const node = new AudioWorkletNode(audio, "pcm", { outputChannelCount: [2] });
+  node.connect(audio.destination);
+  port = node.port;
+}
+
+// ---- the connection
+function connect() {
+  status.textContent = T.connecting;
+  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { status.textContent = T.connected; };
+  ws.onmessage = async (e) => {
+    const kind = new Uint8Array(e.data, 0, 1)[0];
+    if (kind === 1) {
+      const img = await createImageBitmap(new Blob([new Uint8Array(e.data, 1)], { type: "image/jpeg" }));
+      if (canvas.width !== img.width || canvas.height !== img.height) { canvas.width = img.width; canvas.height = img.height; }
+      ctx.drawImage(img, 0, 0);
+      img.close();
+    } else if (kind === 2 && port) {
+      port.postMessage(e.data.slice(1), []);
+    }
+  };
+  ws.onclose = () => { status.textContent = T.closed; if (!ended) setTimeout(connect, 1000); };
+}
+function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+
+// ---- keyboard: by position (KeyboardEvent.code); the simulator knows the layout
+const held = new Set();
+addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;  // leave the browser's shortcuts alone
+  e.preventDefault();
+  if (e.repeat || held.has(e.code)) return;
+  held.add(e.code); send({ key: e.code, down: true });
+});
+addEventListener("keyup", (e) => {
+  if (!held.delete(e.code)) return;
+  e.preventDefault(); send({ key: e.code, down: false });
+});
+addEventListener("blur", () => { for (const c of held) send({ key: c, down: false }); held.clear(); });
+
+// ---- gamepads (the standard mapping is by position: buttons[0] is the bottom one = B on Alia Pad)
+const BUTTONS = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "select", "start", "l3", "r3",
+                 "up", "down", "left", "right", "home"];
+const AXES = ["lx", "ly", "rx", "ry"];
+let last = {};
+function poll() {
+  const pad = [...navigator.getGamepads()].find((p) => p && p.connected);
+  const now = {};
+  if (pad) {
+    BUTTONS.forEach((b, i) => { if (pad.buttons[i]) now[b] = pad.buttons[i].pressed; });
+    AXES.forEach((a, i) => { const v = pad.axes[i] || 0; now[a] = Math.abs(v) < 0.12 ? 0 : Math.round(v * 32767); });
+  }
+  const changed = {};
+  for (const k of new Set([...Object.keys(now), ...Object.keys(last)])) {
+    const v = k in now ? now[k] : (AXES.includes(k) ? 0 : false);
+    if (last[k] !== v) changed[k] = v;
+  }
+  if (Object.keys(changed).length) send({ pad: changed });
+  last = now;
+  requestAnimationFrame(poll);
+}
+
+document.getElementById("start").addEventListener("click", async (e) => {
+  e.currentTarget.remove();
+  await startAudio();
+  canvas.focus();
+});
+connect();
+requestAnimationFrame(poll);
+</script>
+</body>
+</html>

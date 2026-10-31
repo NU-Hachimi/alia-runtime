@@ -106,15 +106,22 @@ PipeWire ◄── socket ─────────────── 卡带�
 - **GPU**：挂 `/dev/dri`，容器里的 Mesa 驱动 Intel 和 AMD。NVIDIA 闭源驱动下 Mesa 用不了它，自动退到软件渲染（llvmpipe），提示一次；装了 NVIDIA 容器工具的可以用 `--gpu nvidia`。`--software` 强制软件渲染。
 - **声音**：挂电脑的 PipeWire socket，卡带的流带 `media.role = Game`，48 kHz 立体声，和掌机一样。没有 PipeWire 时静音运行并提示。
 
-## 7. 浏览器模式（第二期）
+## 7. 浏览器模式（第二期，2026-10-31）
 
-给 macOS、Windows，以及不想给容器开 Wayland 的人：
+给 macOS、Windows，以及没有 Wayland 桌面的 Linux。`acart run --browser`；没有 Wayland 桌面时自动用它。
 
-- 容器里的 sway 用 headless 后端，supervisor 把画面编码成 H.264（有 GPU 用 VA-API，否则软件编码），声音编码成 Opus，经 WebRTC 发给浏览器。
-- 浏览器页面（容器自己提供，`http://localhost:7300`）显示画面、播放声音，用 **Gamepad API** 读手柄、用键盘事件读键盘，经 WebRTC 数据通道发回 supervisor，再进虚拟手柄。Gamepad API 在所有系统上都能读手柄，所以 macOS 和 Windows 也能用真手柄。
-- 没有 GPU 时全程软件渲染：2D 和简单 3D 够用，帧率不能参考。
-- 在 Apple Silicon 的 Mac 上用 arm64 镜像，原生程序直接跑。
-- **Windows**：经 WSL2 的话，WSLg 提供 Wayland，第一期的窗口模式可能直接能用（GPU 经 `/dev/dxg` 和 Mesa 的 d3d12 驱动）；不行就用浏览器模式。
+- **画面**：容器里的 sway 用 headless 后端；有 GPU（Linux 传进来 `/dev/dri`）就用 GPU 渲染，没有就软件渲染。web 服务（`web.py`）经 sway 的 screencopy（`capture.py`，同一个最小 Wayland 客户端）取画面，变了才取，编码成 JPEG，经 WebSocket 发给浏览器画到 canvas 上。所有浏览器都能用，不依赖 WebRTC 或视频解码器。实测 1280×720 每帧约 17 ms（取 + 编码），封顶 30 帧/秒，每帧 25–30 KB。
+- **声音**：容器自己跑 PipeWire 和 WirePlumber，一个静音的虚拟输出（`image/pipewire/alia-browser.conf`）当默认输出；web 服务录它的 monitor（s16le 48 kHz 立体声，20 ms 一块）发给浏览器，页面用 AudioWorklet 播放，缓冲超过 250 ms 就丢到 60 ms。浏览器要求点一下才能出声，所以页面先显示"点击开始"。
+- **输入**：页面把键盘按**键位**（`KeyboardEvent.code`）发上来，web 服务换成 `runtime.toml` 的键名，再按键盘表变成和窗口模式一样的按键；手柄用 Gamepad API（标准映射本来就按位置：buttons[0] 是下面那个键，也就是 Alia Pad 的 B），只发变化的部分。都进 supervisor 的控制接口，后面和窗口模式一样（虚拟手柄、Home、菜单）。
+- **网络**：浏览器要连进容器，所以这个模式下容器有网络（端口只发布在 `127.0.0.1`）。清单没要网络的卡带，supervisor 用 iptables 按卡带的用户拒绝它的所有出站连接（包括回环），和掌机一样没有网络。要 `--cap-add NET_ADMIN`。
+- **测试**：`tests/browser.sh`（CI 里跑，没有 GPU，正好覆盖软件渲染）：页面、画面和声音、键盘和手柄进到卡带、卡带没有网络。
+
+**还没在 macOS / Windows 上验证的**（这里只有 Linux）：
+
+- **uinput**：卡带的虚拟手柄要 `/dev/uinput`。Docker Desktop（macOS）和 WSL2（Windows）的虚拟机内核有没有它，要实际试；没有的话卡带收不到手柄，要另想办法。
+- Docker Desktop 的文件共享（卡带目录、存档目录在用户目录下，默认是共享的）。
+- 速度：没有 GPU 时全软件渲染，加上虚拟机，3D 游戏的帧率不能参考。
+- Apple Silicon 上用 arm64 镜像（镜像要发 arm64 版），原生程序直接跑掌机的那份。
 
 ## 8. 存档和语言
 

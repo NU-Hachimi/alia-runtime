@@ -99,10 +99,12 @@ class Supervisor:
         env = {"PATH": "/usr/bin:/bin", "HOME": "/tmp", "XDG_RUNTIME_DIR": RUN,
                "WAYLAND_DISPLAY": "/run/host-wayland", "WLR_BACKENDS": "wayland",
                "WLR_NO_HARDWARE_CURSORS": "1", "XDG_CACHE_HOME": "/tmp"}
-        if not os.path.exists("/run/host-wayland"):  # no screen (CI): sway draws into memory
-            env.update(WLR_BACKENDS="headless", WLR_LIBINPUT_NO_DEVICES="1", WLR_RENDERER="pixman")
+        if not os.path.exists("/run/host-wayland"):  # the browser mode, or CI: sway draws into memory
+            env.update(WLR_BACKENDS="headless", WLR_LIBINPUT_NO_DEVICES="1")
             env.pop("WAYLAND_DISPLAY")
-            os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+            if not glob.glob("/dev/dri/renderD*"):  # no GPU passed in (macOS, Windows, CI): software
+                env["WLR_RENDERER"] = "pixman"
+                os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
         if os.environ.get("WLR_RENDERER"):
             env["WLR_RENDERER"] = os.environ["WLR_RENDERER"]
         if os.environ.get("LIBGL_ALWAYS_SOFTWARE"):
@@ -125,6 +127,30 @@ class Supervisor:
             time.sleep(0.05)
         sys.exit(f"sway didn't start (exit {self.sway_proc.poll()}, {RUN}: {os.listdir(RUN)}):\n"
                  + Path("/tmp/sway.log").read_text()[-3000:])
+
+    # ---- the browser mode (docs/design.md §7): its own PipeWire, the web server, the firewall
+    def start_browser_mode(self):
+        env = {"XDG_RUNTIME_DIR": RUN, "PIPEWIRE_RUNTIME_DIR": RUN, "HOME": "/tmp", "PATH": "/usr/bin:/bin",
+               "DISABLE_RTKIT": "1"}
+        for prog in ("pipewire", "wireplumber"):
+            subprocess.Popen([prog], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **self.as_user())
+        for _ in range(100):
+            if os.path.exists(f"{RUN}/pipewire-0"):
+                break
+            time.sleep(0.05)
+        time.sleep(0.5)  # WirePlumber picks the sink up as the default
+        if not self.cart.permissions.get("network"):
+            # the container has a network (the browser reaches the page through it); the cart,
+            # like on the handheld, doesn't: nothing out for its user, loopback included
+            for tool in ("iptables", "ip6tables"):
+                r = subprocess.run([tool, "-A", "OUTPUT", "-m", "owner", "--uid-owner", str(self.uid), "-j", "REJECT"],
+                                   capture_output=True, text=True)
+                if r.returncode:
+                    log.warning("%s: the cart may have network (%s)", tool, r.stderr.strip())
+        self.web = subprocess.Popen([OVERLAY_PY, "-m", "alia_runtime.web"],
+                                    env={"PYTHONPATH": "/opt/alia-runtime:/usr/local/lib/python3.13/dist-packages",
+                                         "ALIA_RT_PORT": os.environ.get("ALIA_RT_PORT", "7300"), "HOME": "/root"})
+        log.info("browser mode: open http://localhost:%s", os.environ.get("ALIA_RT_HOST_PORT", "7300"))
 
     def start_cart(self):
         env = {"LANG": "C.UTF-8", **runtime.env(self.cart.id, self.cart.quota_kb, self.lang),
@@ -343,9 +369,16 @@ class Supervisor:
 
     # ---- threads feeding the loop
     def key_line(self, line: str):
-        """ "press button east", "release stick left up": what our key bindings send."""
+        """ "press button east", "release stick left up": what our keyboard sends; "pad {...}":
+        what changed on a gamepad (the browser mode's)."""
         if os.environ.get("ALIA_RT_DEBUG"):
             print(f"alia-runtime: {time.monotonic():10.3f} key {line.strip()}", flush=True)
+        if line.startswith("pad "):
+            try:
+                self.events.put(("pad", json.loads(line[4:])))
+            except ValueError:
+                pass
+            return
         parts = line.split()
         if len(parts) >= 2 and parts[0] in ("press", "release"):
             self.events.put(("key", parts[0] == "press", parts[1], " ".join(parts[2:])))
@@ -400,6 +433,8 @@ class Supervisor:
         self.make_gamepad()
         self.start_sway()
         self.ipc = swayipc.Sway(self.swaysock)
+        if os.environ.get("ALIA_RT_BROWSER"):
+            self.start_browser_mode()
         self.start_overlay()
         self.start_cart()
         threading.Thread(target=self.read_keys, daemon=True).start()

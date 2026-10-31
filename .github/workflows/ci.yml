@@ -16,3 +16,4 @@ jobs:
       - run: sudo modprobe uinput && sudo chmod 666 /dev/uinput
       - run: image/build.sh devkit/python
       - run: tests/run.sh
+      - run: tests/browser.sh
