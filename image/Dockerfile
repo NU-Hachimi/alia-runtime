@@ -21,6 +21,9 @@ RUN echo 'deb http://deb.debian.org/debian trixie-backports main' > /etc/apt/sou
 # the supervisor's own Python packages (the overlay draws with Pillow): a separate
 # environment, so carts can't come to depend on what the handheld doesn't have
 RUN python3 -m venv /opt/alia-runtime/venv && /opt/alia-runtime/venv/bin/pip install -q pillow==11.3.0 websockets==15.0.1
+# tools for `acart exec` (tests, scripts; not carts): pytest and pyflakes in their own
+# environment that also sees the system's packages (the SDK, numpy...); on PATH only there
+RUN python3 -m venv --system-site-packages /opt/alia-tools && /opt/alia-tools/bin/pip install -q pytest==8.4.2 pyflakes==3.4.0
 # alia-sdk, where the handheld has python3-alia: in the system Python, for carts too
 COPY image/wheels/ /tmp/wheels/
 RUN /opt/alia-runtime/venv/bin/pip install -q --no-deps --target /usr/local/lib/python3.13/dist-packages /tmp/wheels/alia_sdk-*.whl \
