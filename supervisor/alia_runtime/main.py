@@ -150,7 +150,7 @@ class Supervisor:
         self.web = subprocess.Popen([OVERLAY_PY, "-m", "alia_runtime.web"],
                                     env={"PYTHONPATH": "/opt/alia-runtime:/usr/local/lib/python3.13/dist-packages",
                                          "ALIA_RT_PORT": os.environ.get("ALIA_RT_PORT", "7300"), "HOME": "/root"})
-        log.info("browser mode: open http://localhost:%s", os.environ.get("ALIA_RT_HOST_PORT", "7300"))
+        log.info("browser mode: the page starts on port %s", os.environ.get("ALIA_RT_HOST_PORT", "7300"))
 
     def start_cart(self):
         env = {"LANG": "C.UTF-8", **runtime.env(self.cart.id, self.cart.quota_kb, self.lang),
