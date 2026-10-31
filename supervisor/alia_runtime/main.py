@@ -123,6 +123,8 @@ class Supervisor:
                "WAYLAND_DISPLAY": "wayland-0", "SDL_VIDEODRIVER": "wayland"}
         if os.environ.get("LIBGL_ALWAYS_SOFTWARE"):
             env["LIBGL_ALWAYS_SOFTWARE"] = "1"
+        if os.environ.get("ALIA_RT_NO_AUDIO") or not os.path.exists(f"{RUN}/pipewire-0"):
+            env["SDL_AUDIO_DRIVER"] = "dummy"  # acart run --no-audio, or no PipeWire on this PC
         content = CART / "content"
         argv = self.cart.command(self.args, root=CART)
         log.info("starting %s: %s", self.cart.id, " ".join(argv))
