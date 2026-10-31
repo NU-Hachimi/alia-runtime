@@ -15,6 +15,8 @@ import mmap
 import os
 import socket
 import struct
+import threading
+import time
 
 # xkb symbol name (unshifted) -> SDL3 key name, where they differ; letters: "w" -> "W"
 SDL_NAMES = {"Return": "Return", "KP_Enter": "Keypad Enter", "equal": "=", "minus": "-",
@@ -58,11 +60,13 @@ class Keymap:
 
 
 WL_DISPLAY = 1
+REFOCUS_S = 0.3   # the focus back within this: the keys held through it were never released
 LAYER_OVERLAY, KEYBOARD_EXCLUSIVE, ANCHOR_TOP_LEFT = 3, 1, 1 | 4
 
 
 class Wayland:
     def __init__(self, path: str):
+        self.lock = threading.Lock()  # refocus() sends from the supervisor's thread
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(path)
         self.next_id = 2
@@ -78,19 +82,25 @@ class Wayland:
 
     def send(self, oid: int, opcode: int, args: bytes = b"", fds=()):
         msg = struct.pack("<IHH", oid, opcode, 8 + len(args)) + args
-        if fds:
-            socket.send_fds(self.sock, [msg], list(fds))
-        else:
-            self.sock.sendall(msg)
+        with self.lock:
+            if fds:
+                socket.send_fds(self.sock, [msg], list(fds))
+            else:
+                self.sock.sendall(msg)
 
     @staticmethod
     def string(s: str) -> bytes:
         b = s.encode() + b"\0"
         return struct.pack("<I", len(b)) + b + b"\0" * (-len(b) % 4)
 
-    def dispatch(self):
-        """Read from the socket and call the handlers; raises ConnectionError when sway goes."""
-        data, fds, _flags, _addr = socket.recv_fds(self.sock, 65536, 8)
+    def dispatch(self, timeout: float | None = None):
+        """Read from the socket and call the handlers (returns after `timeout` with nothing);
+        raises ConnectionError when sway goes."""
+        self.sock.settimeout(timeout)
+        try:
+            data, fds, _flags, _addr = socket.recv_fds(self.sock, 65536, 8)
+        except TimeoutError:
+            return
         if not data:
             raise ConnectionError("the compositor is gone")
         self.buf += data
@@ -103,6 +113,19 @@ class Wayland:
             handler = self.handlers.get(oid)
             if handler:
                 handler(opcode, payload)
+
+
+_refocus = []
+
+
+def refocus():
+    """Ask for the keyboard again: sway moves the focus when a window opens or the workspace
+    changes (the overlay) and doesn't always give it back to the layer surface."""
+    for f in list(_refocus):
+        try:
+            f()
+        except OSError:
+            pass  # the compositor is gone (shutting down)
 
 
 def run(path: str, on_key):
@@ -146,7 +169,9 @@ def run(path: str, on_key):
 
     compositor = bind("wl_compositor", 4)
     shm = bind("wl_shm", 1)
-    held: dict[int, str | None] = {}  # key code -> the name it had when pressed
+    held: dict[int, str] = {}   # key code -> its name when pressed
+    away: dict[int, str] = {}   # held when the focus left; up unless it comes back in time
+    deadline = [None]
 
     def keyboard_event(op, p):
         if op == 0:      # keymap(format, fd, size)
@@ -157,29 +182,52 @@ def run(path: str, on_key):
                         keymap.load(m[:].rstrip(b"\0") + b"\0")
                 os.close(fd)
             wl.fds.clear()
-        elif op == 1:    # enter(serial, surface, keys[]): keys already down count as pressed
+        elif op == 1:    # enter(serial, surface, keys[])
+            if os.environ.get("ALIA_RT_DEBUG"):
+                print(f"alia-runtime: {time.monotonic():10.3f} keyboard focus in", flush=True)
+            # sway takes the focus away and gives it back when a window opens (the quick menu,
+            # while Home is still held): a key down before and after that never went up.
+            # A key that's new in the list is a press (a keyboard that just appeared does that).
             n, = struct.unpack_from("<I", p, 8)
             for code in struct.unpack_from(f"<{n // 4}I", p, 12):
-                if code not in held:
-                    held[code] = keymap.name(code)
+                if code in away:
+                    held[code] = away.pop(code)
+                elif code not in held:
+                    held[code] = keymap.name(code) or ""
                     on_key(held[code], True)
-        elif op == 2:    # leave: everything up
-            for name in held.values():
-                on_key(name, False)
+            release_away()
+        elif op == 2:    # leave: up only if the focus doesn't come back soon (enter, above)
+            if os.environ.get("ALIA_RT_DEBUG"):
+                print(f"alia-runtime: {time.monotonic():10.3f} keyboard focus out", flush=True)
+            away.update(held)
             held.clear()
+            deadline[0] = time.monotonic() + REFOCUS_S
         elif op == 3:    # key(serial, time, key, state); a release goes by what the press was
             _serial, _time, code, state = struct.unpack_from("<IIII", p)
             if state and code not in held:
-                held[code] = keymap.name(code)
+                held[code] = keymap.name(code) or ""
                 on_key(held[code], True)
             elif not state and code in held:
                 on_key(held.pop(code), False)
 
+    def release_away():
+        for name in away.values():
+            on_key(name, False)
+        away.clear()
+        deadline[0] = None
+
     def seat_event(op, p):
-        if op == 0 and struct.unpack_from("<I", p)[0] & 2 and not keyboards:  # capabilities: keyboard
+        # capabilities: the keyboard capability goes when the last keyboard does (unplugged; a
+        # virtual one closed) and comes back with the next; each time, a new wl_keyboard
+        if op != 0:
+            return
+        has = bool(struct.unpack_from("<I", p)[0] & 2)
+        if has and not keyboards:
             kb = wl.new(keyboard_event)
             keyboards.append(kb)
-            wl.send(seat, 1, struct.pack("<I", kb))  # wl_seat.get_keyboard
+            wl.send(seat, 1, struct.pack("<I", kb))   # wl_seat.get_keyboard
+        elif not has and keyboards:
+            wl.send(keyboards.pop(), 0)               # wl_keyboard.release
 
     keyboards: list[int] = []
     seat = bind("wl_seat", 5, seat_event)
@@ -219,5 +267,12 @@ def run(path: str, on_key):
     wl.send(layer, 1, struct.pack("<I", ANCHOR_TOP_LEFT))               # set_anchor
     wl.send(layer, 4, struct.pack("<I", KEYBOARD_EXCLUSIVE))            # set_keyboard_interactivity
     wl.send(surface, 6)                                                 # commit (no buffer yet)
+
+    def ask_again():
+        wl.send(layer, 4, struct.pack("<I", KEYBOARD_EXCLUSIVE))
+        wl.send(surface, 6)
+    _refocus.append(ask_again)
     while True:
-        wl.dispatch()
+        wl.dispatch(timeout=0.05 if deadline[0] else None)
+        if deadline[0] and time.monotonic() > deadline[0]:
+            release_away()

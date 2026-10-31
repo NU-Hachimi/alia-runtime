@@ -31,6 +31,5 @@ def sway_config(width: int, height: int) -> str:
     goes to the supervisor's overlay surface (wlkeys), key by key."""
     lines = ["xwayland disable", f"output * resolution {width}x{height} bg #000000 solid_color",
              "default_border none", "focus_follows_mouse no", "seat * hide_cursor 2000",
-             'for_window [app_id=".*"] fullscreen enable', 'for_window [title=".*"] fullscreen enable',
-             'for_window [app_id="alia-overlay"] fullscreen enable, focus']
+             'for_window [app_id=".*"] fullscreen enable', 'for_window [title=".*"] fullscreen enable']
     return "\n".join(lines) + "\n"

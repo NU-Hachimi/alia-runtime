@@ -38,6 +38,11 @@ HOLD_S = 0.5          # Home held this long: the quick menu
 OVERLAY_PY = "/opt/alia-runtime/venv/bin/python"
 MENU = ["continue", "language", "screen_off", "quit"]
 CONTROL_DIR = "/run/alia-rt"
+_ARROWS = {"Up": "↑", "Down": "↓", "Left": "←", "Right": "→"}
+_KB = runtime.keyboard()
+# the keys the overlay names (its keyboard line), from the platform's layout
+KEY_NAMES = {b: _KB[b][0] for b in ("home", "east", "south")}
+KEY_NAMES["dpad"] = "".join(_ARROWS.get(_KB[d][0], _KB[d][0]) for d in ("up", "down", "left", "right"))
 
 
 class Supervisor:
@@ -58,7 +63,9 @@ class Supervisor:
         self.sticks = {"left": set(), "right": set()}
         self.shift = False
         self.pad_state: dict = {}  # the PC gamepad, merged into player 1
+        self.consumed: set = set()  # buttons the system UI took: kept from the cart until released
         self.overlay = None
+        self.showing = False
         self.proc = None
 
     # ---- set-up
@@ -100,7 +107,8 @@ class Supervisor:
             env["WLR_RENDERER"] = os.environ["WLR_RENDERER"]
         if os.environ.get("LIBGL_ALWAYS_SOFTWARE"):
             env["LIBGL_ALWAYS_SOFTWARE"] = "1"
-        self.sway_proc = subprocess.Popen(["sway", "-c", conf], env=env, stdout=subprocess.DEVNULL,
+        argv = ["sway", "-c", conf] + (["-d"] if os.environ.get("ALIA_RT_DEBUG") else [])
+        self.sway_proc = subprocess.Popen(argv, env=env, stdout=subprocess.DEVNULL,
                                           stderr=open("/tmp/sway.log", "w"), **self.as_user())
         deadline = time.time() + 10
         while time.time() < deadline:
@@ -182,27 +190,25 @@ class Supervisor:
         self.signal(signal.SIGTERM)
         threading.Timer(RULES["timing"]["term_grace_s"], lambda: self.signal(signal.SIGKILL)).start()
 
-    # ---- the overlay (pause screen, quick menu): a renderer we tell what to draw
+    # ---- the overlay (pause screen, quick menu): a surface on sway's overlay layer over the
+    # frozen cart (overlay.py), running from the start; we tell it what to draw
+    def start_overlay(self):
+        env = {"XDG_RUNTIME_DIR": RUN, "WAYLAND_DISPLAY": "wayland-0", "HOME": "/tmp",
+               "PYTHONPATH": "/opt/alia-runtime"}
+        self.overlay = subprocess.Popen([OVERLAY_PY, "-m", "alia_runtime.overlay"], env=env,
+                                        stdin=subprocess.PIPE, text=True, **self.as_user())
+
     def show(self, screen: str | None):
-        if screen is None:
-            if self.overlay:
-                self.ipc.command("workspace 1")
-                self.overlay.stdin.close()
-                self.overlay = None
+        if screen is None and not self.showing:
             return
-        if self.overlay is None:
-            shot = "/tmp/alia-rt-frame.ppm"
-            subprocess.run(["grim", "-t", "ppm", shot], env={"XDG_RUNTIME_DIR": RUN, "WAYLAND_DISPLAY": "wayland-0"},
-                           **self.as_user(), check=False)
-            self.ipc.command("workspace 2")
-            env = {"XDG_RUNTIME_DIR": RUN, "WAYLAND_DISPLAY": "wayland-0", "SDL_VIDEODRIVER": "wayland",
-                   "SDL_APP_ID": "alia-overlay", "HOME": "/tmp", "PYTHONPATH": "/opt/alia-runtime"}
-            self.overlay = subprocess.Popen([OVERLAY_PY, "-m", "alia_runtime.overlay", shot], env=env,
-                                            stdin=subprocess.PIPE, text=True, **self.as_user())
+        self.showing = screen is not None
         msg = {"screen": screen, "lang": self.lang, "menu": MENU, "index": self.menu_index,
-               "pause": self.cart.pause}
-        self.overlay.stdin.write(json.dumps(msg) + "\n")
-        self.overlay.stdin.flush()
+               "pause": self.cart.pause, "keys": KEY_NAMES}
+        try:
+            self.overlay.stdin.write(json.dumps(msg) + "\n")
+            self.overlay.stdin.flush()
+        except (BrokenPipeError, AttributeError):
+            log.warning("the overlay isn't running (exit %s)", self.overlay and self.overlay.poll())
 
     # ---- input
     def release_all(self):
@@ -211,7 +217,11 @@ class Supervisor:
     def update_pad(self):
         if self.state != "running":
             return
-        buttons = {b: self.held.get(b, False) or self.pad_state.get(b, False) for b in self.pad.buttons}
+        for b in list(self.consumed):  # released on every device: the cart may see it again
+            if not self.held.get(b) and not self.pad_state.get(b):
+                self.consumed.discard(b)
+        buttons = {b: (self.held.get(b, False) or self.pad_state.get(b, False)) and b not in self.consumed
+                   for b in self.pad.buttons}
         tilt = AXIS_MAX // 2 if self.shift else AXIS_MAX
         axes = {}
         for side, prefix in (("left", "l"), ("right", "r")):
@@ -293,8 +303,10 @@ class Supervisor:
         self.update_pad()
 
     def on_system_button(self, button: str):
+        # the system UI took this press: it doesn't reach the cart, even if the cart resumes
+        # while it's still held (the A that picks "continue")
+        self.consumed.add(button)
         if self.state == "paused":
-            self.held[button] = False  # the key that wakes it doesn't reach the game
             self.resume_now()
         elif self.state == "off":
             self.after_wake()
@@ -366,6 +378,20 @@ class Supervisor:
                 for line in f:
                     self.key_line(line)
 
+    def watch_window(self):
+        """The PC's window closed (the nested output is gone): quit the cart, as the user
+        meant to; otherwise sway runs on with nothing to show and the run never ends."""
+        if not os.path.exists("/run/host-wayland"):
+            return  # headless (CI): there's no window to close
+        try:
+            for _ in swayipc.Sway(self.swaysock).output_events():
+                if not any(o.get("active") for o in swayipc.Sway(self.swaysock).outputs()):
+                    log.info("the window was closed")
+                    self.events.put(("stop",))
+                    return
+        except ConnectionError:
+            pass
+
     def watch_cart(self):
         code = self.proc.wait()
         self.events.put(("exit", code))
@@ -374,10 +400,12 @@ class Supervisor:
         self.make_gamepad()
         self.start_sway()
         self.ipc = swayipc.Sway(self.swaysock)
+        self.start_overlay()
         self.start_cart()
         threading.Thread(target=self.read_keys, daemon=True).start()
         threading.Thread(target=self.watch_cart, daemon=True).start()
         threading.Thread(target=self.control, daemon=True).start()
+        threading.Thread(target=self.watch_window, daemon=True).start()
         if os.environ.get("ALIA_RT_PADS"):
             pads.start(os.environ["ALIA_RT_PADS"].split(":"), self.events)
         signal.signal(signal.SIGTERM, lambda *_: self.events.put(("stop",)))
@@ -405,6 +433,8 @@ class Supervisor:
                 code = ev[1]
                 log.info("%s exited: %s", self.cart.id, code)
                 self.show(None)
+                if self.overlay:
+                    self.overlay.terminate()
                 self.sway_proc.terminate()
                 self.pad.close()
                 return code if code >= 0 else 128 - code

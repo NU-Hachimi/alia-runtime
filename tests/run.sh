@@ -22,7 +22,10 @@ ctl tap button home; sleep 1           # suspend: SIGUSR1, frozen
 ctl tap button south; sleep 0.3        # frozen: must not reach the cart
 ctl tap button home; sleep 1           # resume: SIGUSR2 (pause = "game": no paused screen)
 ctl tap button west; sleep 0.3
-ctl hold button home 0.8; sleep 0.5    # quick menu
+kbd -P h -s 900 -p h; sleep 0.8        # quick menu: a long Home on the keyboard (stays open)
+kbd -k Down -s 200 -k Up; sleep 0.3
+kbd -P x -s 150 -p x; sleep 0.8        # "continue": that A must not reach the cart
+ctl hold button home 0.8; sleep 0.5    # quick menu again
 for _ in 1 2 3; do ctl tap button down; done
 ctl tap button east                    # quit
 for _ in $(seq 50); do docker ps -q --filter name=alia-rt-test | grep -q . || break; sleep 0.2; done
@@ -31,7 +34,7 @@ released=$(grep '^ly' "$SAVE/events.txt" | tail -1)
 echo "stick: $sticks deflections, last: $released"
 [ "$sticks" -ge 1 ] && [ "$released" = "ly 0" ] || { echo "FAIL: W held then released should leave the stick at 0"; exit 1; }
 got=$(grep -v '^ly' "$SAVE/events.txt" | tr '\n' ' ')
-want="start lang=zh-CN cart=/cart gamepad button east button east button north SIGUSR1 SIGUSR2 button west SIGUSR1 quit "   # quitting a frozen cart: SIGCONT, SIGTERM (no SIGUSR2), as alia-session does
+want="start lang=zh-CN cart=/cart gamepad button east button east button north SIGUSR1 SIGUSR2 button west SIGUSR1 SIGUSR2 SIGUSR1 quit "   # quitting a frozen cart: SIGCONT, SIGTERM (no SIGUSR2), as alia-session does
 echo "cart saw: $got"
 [ "$got" = "$want" ] || { echo "FAIL: expected: $want"; exit 1; }
 echo PASS

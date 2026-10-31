@@ -4,7 +4,8 @@ import socket
 import struct
 
 MAGIC = b"i3-ipc"
-RUN_COMMAND = 0
+RUN_COMMAND, GET_OUTPUTS, SUBSCRIBE = 0, 3, 2
+EVENT_OUTPUT = 0x80000001
 
 
 class Sway:
@@ -33,3 +34,16 @@ class Sway:
     def command(self, cmd: str):
         self._send(RUN_COMMAND, cmd)
         return self._read()[1]
+
+    def outputs(self) -> list:
+        self._send(GET_OUTPUTS, "")
+        return self._read()[1]
+
+    def output_events(self):
+        """Yields on every output change (the window closed: the nested output is gone)."""
+        self._send(SUBSCRIBE, '["output"]')
+        self._read()
+        while True:
+            kind, _ev = self._read()
+            if kind == EVENT_OUTPUT:
+                yield
