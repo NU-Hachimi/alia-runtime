@@ -1,2 +1,2 @@
-ALIA_SDK=0.2.1   # alia-sdk release in the image (its runtime.toml is the rules)
+ALIA_SDK=0.2.2   # alia-sdk release in the image (its runtime.toml is the rules)
 PLATFORM=1.0     # the platform baseline it carries: the tag acart run pulls (ghcr.io/nu-hachimi/alia-runtime:1.0)
