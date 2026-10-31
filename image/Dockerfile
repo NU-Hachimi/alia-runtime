@@ -12,7 +12,7 @@ RUN echo 'deb http://deb.debian.org/debian trixie-backports main' > /etc/apt/sou
       libegl1 libegl-mesa0 libgles2 libgbm1 mesa-libgallium \
       libwayland-client0 libwayland-egl1 libsdl3-0 libasound2t64 pipewire-alsa \
       python3 fonts-noto-cjk \
-      sway grim python3-venv ca-certificates \
+      sway grim wtype python3-venv ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 # the supervisor's own Python packages (the overlay draws with Pillow): a separate
 # environment, so carts can't come to depend on what the handheld doesn't have

@@ -332,6 +332,8 @@ class Supervisor:
     # ---- threads feeding the loop
     def key_line(self, line: str):
         """ "press button east", "release stick left up": what our key bindings send."""
+        if os.environ.get("ALIA_RT_DEBUG"):
+            print(f"alia-runtime: {time.monotonic():10.3f} key {line.strip()}", flush=True)
         parts = line.split()
         if len(parts) >= 2 and parts[0] in ("press", "release"):
             self.events.put(("key", parts[0] == "press", parts[1], " ".join(parts[2:])))

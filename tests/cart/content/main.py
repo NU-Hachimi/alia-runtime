@@ -31,4 +31,8 @@ while True:
             log.write("gamepad\n")
         if kind == 0x651:
             log.write(f"button {names.get(ev.raw[20], ev.raw[20])}\n")
+        if kind == 0x650 and os.environ.get("ALIA_TEST_AXES") is None:  # left stick, y: -32767 up .. 0
+            axis, value = ev.raw[20], int.from_bytes(ev.raw[24:26], "little", signed=True)
+            if axis == 1:
+                log.write(f"ly {value}\n")
     sdl.SDL_Delay(10)
