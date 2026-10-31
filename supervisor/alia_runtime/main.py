@@ -291,7 +291,9 @@ class Supervisor:
     def on_home(self, down: bool):
         if down:
             self.home_down_at = time.time()
-            if self.state == "running":  # a long press opens the menu without waiting for release
+            # a long press opens the quick menu without waiting for release, from the game, the
+            # home screen or the paused screen alike (as on the handheld)
+            if self.state in ("running", "home", "paused"):
                 threading.Timer(HOLD_S, self.events.put, args=(("home-held", self.home_down_at),)).start()
             return
         held = self.home_down_at and time.time() - self.home_down_at >= HOLD_S
@@ -302,14 +304,19 @@ class Supervisor:
             self.freeze()
             self.state = "home"
             self.show("home")
+        elif self.state == "paused":  # back to the home screen, the game stays frozen
+            self.state = "home"
+            self.show("home")
         elif self.state in ("home", "menu"):
             self.resume()
 
     def on_home_held(self, at):
-        if self.home_down_at == at and self.state == "running":
+        if self.home_down_at != at or self.state not in ("running", "home", "paused"):
+            return
+        if self.state == "running":
             self.freeze()
-            self.state, self.menu_index = "menu", 0
-            self.show("menu")
+        self.state, self.menu_index = "menu", 0
+        self.show("menu")
 
     def on_power(self):
         if self.state == "running":
