@@ -6,8 +6,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 IMAGE=${1:-alia-runtime:dev}
+# NO_UINPUT=1: as on Docker Desktop (Windows, macOS): no /dev/uinput, the gamepad simulated in user space
+UINPUT=(--device /dev/uinput --device-cgroup-rule 'c 13:* rmw')
+[ -n "${NO_UINPUT:-}" ] && UINPUT=()
+docker rm -f alia-rt-browser > /dev/null 2>&1 || true   # a run before this one still going away
 SAVE=$(mktemp -d) && chmod 777 "$SAVE"
-docker run -d --name alia-rt-browser --rm --init --device /dev/uinput --device-cgroup-rule 'c 13:* rmw' \
+docker run -d --name alia-rt-browser --rm --init "${UINPUT[@]}" \
     --cap-add NET_ADMIN -p 127.0.0.1:7399:7300 -v "$PWD/cart:/cart:ro" -v "$SAVE:/save" \
     -e ALIA_RT_UID="$(id -u)" -e ALIA_RT_GID="$(id -g)" -e ALIA_RT_BROWSER=1 "$IMAGE" > /dev/null
 trap 'docker rm -f alia-rt-browser > /dev/null 2>&1 || true' EXIT

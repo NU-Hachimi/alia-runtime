@@ -23,3 +23,5 @@ jobs:
       - run: image/build.sh devkit/python
       - run: tests/run.sh
       - run: tests/browser.sh
+      - name: without /dev/uinput (as on Docker Desktop)
+        run: NO_UINPUT=1 tests/run.sh && NO_UINPUT=1 tests/browser.sh

@@ -98,7 +98,7 @@ PipeWire ◄── socket ─────────────── 卡带�
 
   和系统开发者的控制面板同一套（参照 Ryujinx 等电脑模拟器的习惯：左手左摇杆和左肩键，右手右摇杆和右肩键），可以用 `--keys FILE` 换。
 - **真手柄**：电脑上的手柄（`/dev/input`，只读挂进容器）由 supervisor 用 SDL3 读，按位置转发。**电脑上的第一个手柄是 1P**，替代键盘；再多的排 2P、3P，规则和掌机以后接外置手柄一样（`runtime.toml`，alia-inputd 的规划）。Xbox 手柄的 A 在下面，在 Alia Pad 上就是 B，窗口标题栏显示当前按下的掌机按键，避免误会。
-- **没有 uinput 权限时**：`acart run` 提前检查，给出一行 udev 规则。大部分发行版已经给登录用户开了 uinput 的权限（uaccess）。
+- **没有 uinput 时**（Docker Desktop：Windows、macOS 的虚拟机里没有这个设备）：supervisor 在用户空间模拟同一个手柄。它在容器的 `/dev/input` 里放一个内核里并不存在的设备节点（`event200`），只给卡带预加载一个小库（`image/fakepad/fakepad.c`，`LD_PRELOAD`）：卡带打开这个节点时，库把它接到 supervisor 的 socket 上，读到的是标准的 `input_event`；SDL 查询设备信息的 evdev ioctl 由库照 alia-inputd 的手柄回答（名字、ID、按键、摇杆范围），所以 SDL 算出同一个 GUID，`runtime.toml` 的映射照样生效，游戏分辨不出来。这个库只在模拟器镜像里，掌机上不存在。`NO_UINPUT=1 tests/run.sh`、`NO_UINPUT=1 tests/browser.sh` 测这条路（CI 两种架构都跑）。
 
 ## 6. 画面、GPU、声音
 
@@ -118,7 +118,7 @@ PipeWire ◄── socket ─────────────── 卡带�
 
 **还没在 macOS / Windows 上验证的**（这里只有 Linux）：
 
-- **uinput**：卡带的虚拟手柄要 `/dev/uinput`。Docker Desktop（macOS）和 WSL2（Windows）的虚拟机内核有没有它，要实际试；没有的话卡带收不到手柄，要另想办法。
+- **uinput**：Windows（Docker Desktop on WSL2）实测没有（2026-10-31）；没有时用上面的用户空间手柄。macOS 应该一样，待实测。
 - Docker Desktop 的文件共享（卡带目录、存档目录在用户目录下，默认是共享的）。
 - 速度：没有 GPU 时全软件渲染，加上虚拟机，3D 游戏的帧率不能参考。
 - Apple Silicon 上用 arm64 镜像（镜像要发 arm64 版），原生程序直接跑掌机的那份。

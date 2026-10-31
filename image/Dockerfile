@@ -1,6 +1,13 @@
 # alia-runtime: Debian 13 with the Alia Pad platform baseline, as on the handheld, plus the
 # supervisor that runs a cart the way the handheld does (docs/design.md).
 #   built by image/build.sh (context: the repository root)
+# the gamepad without /dev/uinput (Docker Desktop on Windows and macOS): a preloaded library
+# the supervisor gives the cart only then (image/fakepad/fakepad.c)
+FROM debian:trixie AS fakepad
+RUN apt-get update -q && apt-get install -y -q --no-install-recommends gcc libc6-dev linux-libc-dev && rm -rf /var/lib/apt/lists/*
+COPY image/fakepad/fakepad.c /src/
+RUN gcc -shared -fPIC -O2 -Wall -Wextra -Werror -o /src/libaliafakepad.so /src/fakepad.c -ldl
+
 FROM debian:trixie
 LABEL org.opencontainers.image.source="https://github.com/NU-Hachimi/alia-runtime" \
       org.opencontainers.image.description="Alia Pad cart runtime: run carts on a PC the way the handheld does" \
@@ -29,6 +36,7 @@ COPY image/wheels/ /tmp/wheels/
 RUN /opt/alia-runtime/venv/bin/pip install -q --no-deps --target /usr/local/lib/python3.13/dist-packages /tmp/wheels/alia_sdk-*.whl \
  && rm -rf /tmp/wheels /usr/local/lib/python3.13/dist-packages/bin
 COPY supervisor/alia_runtime /opt/alia-runtime/alia_runtime
+COPY --from=fakepad /src/libaliafakepad.so /opt/alia-runtime/lib/libaliafakepad.so
 COPY supervisor/web /opt/alia-runtime/web
 # the browser mode's sound (its own PipeWire, a silent sink)
 COPY image/pipewire/alia-browser.conf /etc/pipewire/pipewire.conf.d/alia-browser.conf

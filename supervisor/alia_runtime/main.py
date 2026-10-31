@@ -74,8 +74,18 @@ class Supervisor:
         return dict(user=self.uid, group=self.gid, extra_groups=groups)
 
     def make_gamepad(self):
+        """The handheld's gamepad: through /dev/uinput, or without it (Docker Desktop on Windows
+        and macOS has none) the same device simulated in user space (fakepad)."""
         g = RULES["gamepad"]
-        self.pad = Gamepad(g["name"], g["bustype"], g["vendor"], g["product"], g["version"])
+        self.pad_env = {}
+        try:
+            self.pad = Gamepad(g["name"], g["bustype"], g["vendor"], g["product"], g["version"])
+        except OSError as e:
+            from .fakepad import FakeGamepad
+            log.info("no /dev/uinput (%s): the gamepad is simulated in user space", e.strerror)
+            self.pad = FakeGamepad(self.uid, self.gid)
+            self.pad_env = self.pad.env()
+            return
         sysdir = f"/sys/devices/virtual/input/{self.pad.sysname()}"
         for _ in range(50):  # the event node appears a moment after UI_DEV_CREATE
             nodes = glob.glob(sysdir + "/event*")
@@ -154,7 +164,7 @@ class Supervisor:
 
     def start_cart(self):
         env = {"LANG": "C.UTF-8", **runtime.env(self.cart.id, self.cart.quota_kb, self.lang),
-               "WAYLAND_DISPLAY": "wayland-0", "SDL_VIDEODRIVER": "wayland"}
+               "WAYLAND_DISPLAY": "wayland-0", "SDL_VIDEODRIVER": "wayland", **self.pad_env}
         if os.environ.get("LIBGL_ALWAYS_SOFTWARE"):
             env["LIBGL_ALWAYS_SOFTWARE"] = "1"
         if os.environ.get("ALIA_RT_NO_AUDIO") or not self.audio_works(env):
