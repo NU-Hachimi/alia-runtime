@@ -2,6 +2,9 @@
 # supervisor that runs a cart the way the handheld does (docs/design.md).
 #   built by image/build.sh (context: the repository root)
 FROM debian:trixie
+LABEL org.opencontainers.image.source="https://github.com/NU-Hachimi/alia-runtime" \
+      org.opencontainers.image.description="Alia Pad cart runtime: run carts on a PC the way the handheld does" \
+      org.opencontainers.image.licenses="MIT"
 ARG DEBIAN_FRONTEND=noninteractive
 # Mesa comes from trixie-backports, as on the handheld: one install, so that everything
 # pulling in Mesa (sway) takes the same version
