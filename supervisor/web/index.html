@@ -32,7 +32,7 @@ document.getElementById("start-hint").textContent = T.hint;
 const status = document.getElementById("status");
 const canvas = document.getElementById("screen");
 const ctx = canvas.getContext("2d");
-let ws = null, ended = false;
+let ws = null, ended = false, everConnected = false, tries = 0;
 
 // ---- sound: s16le stereo 48 kHz in, through a small ring buffer in an AudioWorklet
 let audio = null, port = null;
@@ -62,7 +62,7 @@ function connect() {
   status.textContent = T.connecting;
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { status.textContent = T.connected; };
+  ws.onopen = () => { status.textContent = T.connected; everConnected = true; };
   ws.onmessage = async (e) => {
     const kind = new Uint8Array(e.data, 0, 1)[0];
     if (kind === 1) {
@@ -74,7 +74,17 @@ function connect() {
       port.postMessage(e.data.slice(1), []);
     }
   };
-  ws.onclose = () => { status.textContent = T.closed; if (!ended) setTimeout(connect, 1000); };
+  ws.onclose = () => {
+    // The simulator ended (the cart quit, Ctrl-C): stop here, and let the sound go. Retrying
+    // forever kept a forgotten tab busy. Before the first connection it may still be starting.
+    if (everConnected || ++tries > 30) {
+      ended = true; status.textContent = T.closed;
+      if (audio) { audio.close(); audio = null; port = null; }
+      document.title = `${T.closed} · Alia Pad`;
+      return;
+    }
+    setTimeout(connect, 1000);
+  };
 }
 function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
 
@@ -119,7 +129,7 @@ function poll() {
   }
   if (Object.keys(changed).length) send({ pad: changed });
   last = now;
-  requestAnimationFrame(poll);
+  if (!ended) requestAnimationFrame(poll);
 }
 
 document.getElementById("start").addEventListener("click", async (e) => {
