@@ -128,6 +128,12 @@ PipeWire ◄── socket ─────────────── 卡带�
 - 存档放在电脑上的 `~/.local/share/alia-runtime/saves/<id>`，挂成容器里的 `/save`，配额按清单检查（SDK 的 `alia.save` 本来就会查）。`acart run --fresh` 用一个临时的空存档目录。
 - 语言：`--lang`，默认跟随电脑的 `LANG`（`zh_CN.UTF-8` → `zh-CN`，其他 → `en`）。快捷菜单里切换，下次启动生效，和掌机一样。
 
+## 8.1 相机（2026-11-04）
+
+掌机上的相机接口（协议 v2：开发包的 `include/alia/camera_proto.h`、`docs/camera.md`；客户端 `alia/camera.h`、`alia.camera`）：清单里 `[permissions] camera = true` 的卡带在 `/run/alia/camera.sock` 找到相机的 socket，没声明的找不到。掌机上第一次打开时系统问用户（游戏挂起），回答存在系统的权限存储里，设置里能改；卡带拿到的是原始 8 位拜耳帧、每帧的颜色参数，按参考着色器（`camera/alia_camera.glsl`）自己画。
+
+模拟器里**现在还没有相机**：声明了的卡带照样找到 socket，`supervisor/alia_runtime/camera.py` 按协议回 SERVER_HELLO，OPEN 回 ERROR UNAVAILABLE（就是掌机没装相机时的回答），卡带"没有相机"的那条路在电脑上照样能测。测试卡带检查这个回答（`tests/run.sh`）。以后的真相机见 §11。
+
 ## 9. Docker 和权限
 
 - 支持 Docker 和 Podman（命令兼容）。推荐 rootless Docker 或 Podman：加入 `docker` 组等于拥有 root 权限，文档里要写明。
@@ -148,7 +154,7 @@ tests/            在 CI 里跑一张测试卡带：启动、按键、挂起、�
 
 1. **第一期（Linux，窗口模式）**：镜像、supervisor、键盘和真手柄、挂起和快捷菜单、声音；alia-sdk 0.2.0 加 `acart run`；alia-engine 的 `alia run` 改成调用它。先做一个最小验证：容器里的嵌套 sway 能在电脑的 Wayland 上开窗、用 GPU 渲染、uinput 手柄能被卡带的 SDL 看到。
 2. **第二期（浏览器模式）**：WebRTC 画面和声音、Gamepad API、Mac 和 Windows 的说明。
-3. **以后**：掌机屏幕定了改默认分辨率；外置手柄的规则随 alia-inputd 一起落地；也许支持直接运行 `.acart`（容器里用 squashfuse 挂载）。
+3. **以后**：相机（掌机的 C8）：同一个 socket 和协议，帧来自录好的 IMX219 原始片段（时间戳、序号确定，CI 和 `acart exec` 无头也能跑），或者把电脑 / 浏览器摄像头的画面重新马赛克化成同样的拜耳格式；缓冲区用 memfd（能 mmap，dmabuf 导入不了时卡带退回上传纹理）；模拟权限询问。掌机屏幕定了改默认分辨率；外置手柄的规则随 alia-inputd 一起落地；也许支持直接运行 `.acart`（容器里用 squashfuse 挂载）。
 
 ## 12. 待定
 

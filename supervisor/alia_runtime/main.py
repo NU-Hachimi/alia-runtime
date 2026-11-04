@@ -453,6 +453,9 @@ class Supervisor:
         if os.environ.get("ALIA_RT_BROWSER"):
             self.start_browser_mode()
         self.start_overlay()
+        if self.cart.permissions.get("camera"):  # as the handheld: the socket only for carts that declare it
+            from . import camera
+            camera.serve(f"{RUN}/camera.sock", self.uid, self.gid)
         self.start_cart()
         threading.Thread(target=self.read_keys, daemon=True).start()
         threading.Thread(target=self.watch_cart, daemon=True).start()

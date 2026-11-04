@@ -1,12 +1,26 @@
-"""Test cart: logs what it receives (gamepad buttons, pause signals, its environment) to
-/save/events.txt, one line each, until SIGTERM."""
+"""Test cart: logs what it receives (gamepad buttons, pause signals, its environment, what the
+camera answers) to /save/events.txt, one line each, until SIGTERM."""
 import ctypes
 import os
 import signal
+import socket
+import struct
 import sys
 
 log = open(os.path.join(os.environ["ALIA_SAVE_DIR"], "events.txt"), "a", buffering=1)
 log.write(f"start lang={os.environ.get('ALIA_LANG')} cart={os.environ.get('ALIA_CART_DIR')}\n")
+# the camera (protocol v2, raw: no SDK needed): HELLO, OPEN -> SERVER_HELLO, ERROR {code}
+try:
+    cam = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    cam.connect("/run/alia/camera.sock")
+    cam.send(struct.pack("<2I", 1, 2))
+    cam.send(struct.pack("<4I", 2, 1280, 720, 1))
+    hello = struct.unpack_from("<2I", cam.recv(256))
+    err = struct.unpack_from("<3I", cam.recv(256))
+    log.write(f"camera v{hello[1]} error {err[1]}\n")
+    cam.close()
+except OSError as e:
+    log.write(f"camera {e.strerror}\n")
 signal.signal(signal.SIGUSR1, lambda *_: log.write("SIGUSR1\n"))
 signal.signal(signal.SIGUSR2, lambda *_: log.write("SIGUSR2\n"))
 sdl = ctypes.CDLL("libSDL3.so.0")

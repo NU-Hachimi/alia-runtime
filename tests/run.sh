@@ -1,6 +1,6 @@
 #!/bin/bash
 # End-to-end test of the image, headless (CI): run the test cart, press buttons, suspend and
-# resume it, quit it from the quick menu; check what the cart saw.
+# resume it, quit it from the quick menu; check what the cart saw (the camera's answer too).
 #   tests/run.sh [IMAGE]
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -41,7 +41,7 @@ released=$(grep '^ly' "$SAVE/events.txt" | tail -1)
 echo "stick: $sticks deflections, last: $released"
 [ "$sticks" -ge 1 ] && [ "$released" = "ly 0" ] || { echo "FAIL: W held then released should leave the stick at 0"; exit 1; }
 got=$(grep -v '^ly' "$SAVE/events.txt" | tr '\n' ' ')
-want="start lang=zh-CN cart=/cart gamepad button east button east button north SIGUSR1 SIGUSR2 button west SIGUSR1 SIGUSR2 SIGUSR1 SIGUSR2 SIGUSR1 quit "   # quitting a frozen cart: SIGCONT, SIGTERM (no SIGUSR2), as alia-session does
+want="start lang=zh-CN cart=/cart camera v2 error 4 gamepad button east button east button north SIGUSR1 SIGUSR2 button west SIGUSR1 SIGUSR2 SIGUSR1 SIGUSR2 SIGUSR1 quit "   # quitting a frozen cart: SIGCONT, SIGTERM (no SIGUSR2), as alia-session does
 echo "cart saw: $got"
 [ "$got" = "$want" ] || { echo "FAIL: expected: $want"; exit 1; }
 echo PASS

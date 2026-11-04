@@ -7,3 +7,6 @@ version = "0.0.1"
 type  = "python"
 entry = "main.py"
 pause = "game"          # so the test sees SIGUSR1 / SIGUSR2 too
+
+[permissions]
+camera = true           # the simulator has none yet: the cart must get the typed "unavailable"
