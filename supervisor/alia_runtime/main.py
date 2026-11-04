@@ -284,8 +284,9 @@ class Supervisor:
         if screen is None and not self.showing:
             return
         self.showing = screen is not None
+        self.screen_now = screen
         msg = {"screen": screen, "lang": self.lang, "menu": MENU, "index": self.menu_index,
-               "pause": self.cart.pause, "keys": KEY_NAMES,
+               "pause": self.cart.pause, "keys": KEY_NAMES, "kb": self.keyboard,
                "title": self.cart.titles.get(self.lang.split("-")[0], self.cart.title) if hasattr(self.cart, "titles")
                else self.cart.title}
         try:
@@ -295,6 +296,14 @@ class Supervisor:
             log.warning("the overlay isn't running (exit %s)", self.overlay and self.overlay.poll())
 
     # ---- input
+    keyboard = True    # the keyboard was used last (not a PC gamepad): the overlay names its keys
+
+    def using_keyboard(self, kb: bool):
+        if kb != self.keyboard:
+            self.keyboard = kb
+            if self.showing:
+                self.show(self.screen_now)
+
     def release_all(self):
         self.pad.set(buttons={b: 0 for b in self.pad.buttons}, axes={a: 0 for a in self.pad.axes})
 
@@ -519,10 +528,13 @@ class Supervisor:
             ev = self.events.get()
             if ev[0] == "key":
                 _, down, kind, what = ev
+                self.using_keyboard(True)
                 self.on_input(kind, down, what if kind != "button" else what)
             elif ev[0] == "pad":       # the PC gamepad: buttons and axes, and its Home
                 _, state = ev
                 home = state.pop("home", None)
+                if home or any(v is True or v == 1 for b, v in state.items() if b in self.pad.buttons):
+                    self.using_keyboard(False)
                 if home is not None:
                     self.on_home(home)
                 for b, v in state.items():

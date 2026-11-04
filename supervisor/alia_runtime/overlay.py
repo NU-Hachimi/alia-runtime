@@ -24,24 +24,25 @@ FONT = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 ANCHOR_ALL = 1 | 2 | 4 | 8
 DIM = 170       # alpha of the black over the frozen game
 TEXT = {
-    # buttons by the handheld's names; the keyboard line under them says which keys those are
-    "zh": {"home": ("主页（模拟）", "游戏已挂起。按 Home 或 A 回到游戏。"),
+    # buttons by the handheld's names; {a} {b} {home}: the keyboard key after the button while the
+    # keyboard is what's being used ("A (X)": the keyboard's own A is a stick); the line under them lists the keys
+    "zh": {"home": ("主页（模拟）", "游戏已挂起。按 Home{home} 或 A{a} 回到游戏。"),
            "paused": ("已暂停", "按任意键继续"),
            "off": ("", "熄屏（模拟）：按任意键唤醒"),
            "menu": "快捷菜单",
            "continue": "继续游戏", "language": "语言：中文（下次启动生效）",
-           "screen_off": "熄屏", "quit": "退出游戏", "hint": "上下选择 · A 确定 · B 返回",
+           "screen_off": "熄屏", "quit": "退出游戏", "hint": "上下选择 · A{a} 确定 · B{b} 返回",
            "keyboard": "键盘：Home = {home}　A = {east}　B = {south}　方向 = {dpad}",
-           "permission": ("允许“{title}”使用相机吗？", "A 允许　B 不允许（模拟器里不保存，下次启动再问）")},
-    "en": {"home": ("Home (simulated)", "The game is suspended. Press Home or A to return."),
+           "permission": ("允许“{title}”使用相机吗？", "A{a} 允许　B{b} 不允许", "模拟器里不保存，下次启动再问")},
+    "en": {"home": ("Home (simulated)", "The game is suspended. Press Home{home} or A{a} to return."),
            "paused": ("Paused", "Press any button to continue"),
            "off": ("", "Screen off (simulated): press any button"),
            "menu": "Quick menu",
            "continue": "Continue", "language": "Language: English (on the next start)",
-           "screen_off": "Screen off", "quit": "Quit game", "hint": "Up/Down · A select · B back",
+           "screen_off": "Screen off", "quit": "Quit game", "hint": "Up/Down · A{a} select · B{b} back",
            "keyboard": "Keyboard: Home = {home}   A = {east}   B = {south}   D-pad = {dpad}",
            "permission": ("Allow “{title}” to use the camera?",
-                          "A Allow   B Don't allow   (not kept in the simulator: asked again next start)")},
+                          "A{a} Allow   B{b} Don't allow", "Not kept in the simulator: asked again next start")},
 }
 
 
@@ -50,7 +51,11 @@ def render(size, msg: dict | None) -> Image.Image:
     w, h = size
     if not msg or not msg.get("screen"):
         return Image.new("RGBA", size, (0, 0, 0, 0))
-    t = TEXT["zh" if msg["lang"].startswith("zh") else "en"]
+    zh = msg["lang"].startswith("zh")
+    t = TEXT["zh" if zh else "en"]
+    keys = msg.get("keys") or {}
+    k = (lambda b: f"（{keys[b]}）" if zh else f" ({keys[b]})") if msg.get("kb") and keys else (lambda b: "")
+    fill = {"a": k("east"), "b": k("south"), "home": k("home")}
     screen = msg["screen"]
     img = Image.new("RGBA", size, (0, 0, 0, 255 if screen == "off" else DIM))
     d = ImageDraw.Draw(img)
@@ -66,18 +71,19 @@ def render(size, msg: dict | None) -> Image.Image:
                 d.rounded_rectangle((w * 0.33, y - h * 0.035, w * 0.67, y + h * 0.035), radius=h // 60,
                                     fill=(255, 196, 64, 255))
             d.text((w / 2, y), t[item], font=small, anchor="mm", fill=(20, 20, 20, 255) if on else (230, 232, 240, 255))
-        d.text((w / 2, h * 0.75), t["hint"], font=small, anchor="mm", fill=(110, 116, 132, 255))
+        d.text((w / 2, h * 0.75), t["hint"].format(**fill), font=small, anchor="mm", fill=(110, 116, 132, 255))
     elif screen == "permission":   # the handheld's permission prompt (--camera-permission ask)
-        title, line = t["permission"]
+        title, line, note = t["permission"]
         d.rounded_rectangle((w * 0.15, h * 0.33, w * 0.85, h * 0.67), radius=h // 40, fill=(30, 33, 41, 255))
         d.text((w / 2, h * 0.44), title.format(title=msg.get("title", "")), font=ImageFont.truetype(FONT, h // 22),
                anchor="mm", fill=(230, 232, 240, 255))
-        d.text((w / 2, h * 0.56), line, font=small, anchor="mm", fill=(200, 200, 200, 255))
+        d.text((w / 2, h * 0.54), line.format(**fill), font=small, anchor="mm", fill=(200, 200, 200, 255))
+        d.text((w / 2, h * 0.61), note, font=ImageFont.truetype(FONT, h // 36), anchor="mm", fill=(130, 134, 148, 255))
     else:
         title, line = t[screen]
         if title:
             d.text((w / 2, h * 0.45), title, font=big, anchor="mm", fill=(255, 255, 255, 255))
-        d.text((w / 2, h * 0.58 if title else h * 0.5), line, font=small, anchor="mm",
+        d.text((w / 2, h * 0.58 if title else h * 0.5), line.format(**fill), font=small, anchor="mm",
                fill=(200, 200, 200, 255) if title else (90, 90, 90, 255))
     if screen != "off" and msg.get("keys"):
         d.text((w / 2, h * 0.93), t["keyboard"].format(**msg["keys"]), font=ImageFont.truetype(FONT, h // 36),
