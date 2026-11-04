@@ -212,8 +212,7 @@ class Scene:
 
     def photo(self, s: Sensor, t: float) -> bytes:
         x0, y0, w, h, _ = s.mode["region"]
-        img = self.full.crop((x0, y0, x0 + w, y0 + h))
-        return jpeg(img)
+        return jpeg(developed(self.full.crop((x0, y0, x0 + w, y0 + h)), s))
 
 
 class Picture:
@@ -252,7 +251,7 @@ class Picture:
 
     def photo(self, s: Sensor, t: float) -> bytes:
         img = self.get()
-        return jpeg(img if img is not None else Image.new("RGB", (s.w, s.h)))
+        return jpeg(developed(img if img is not None else Image.new("RGB", (s.w, s.h)), s))
 
     def start(self):
         pass
@@ -283,7 +282,8 @@ class Clip(Picture):
         return s.finish(self.last[1], n, 0.8)
 
     def photo(self, s: Sensor, t: float) -> bytes:
-        return jpeg(self.last[2] if self.last else Image.open(__import__("io").BytesIO(self.jpegs[0])))
+        img = self.last[2] if self.last else Image.open(__import__("io").BytesIO(self.jpegs[0])).convert("RGB")
+        return jpeg(developed(img, s))
 
 
 class V4l2Webcam(Picture):
@@ -343,6 +343,17 @@ class BrowserWebcam(Picture):
 
     def stop(self):
         self.server.feed_send(b"off")
+
+
+def developed(img: Image.Image, s: Sensor) -> Image.Image:
+    """The picture as the handheld's photo ISP would give it: the light the sensor saw (linear,
+    the exposure applied, clipped) through the same tone curve the frames' PARAMS carry, so the
+    photo looks like the live image a cart draws (the colour matrix and white balance cancel out).
+    Not the source picture as it is: the tone curve is contrastier than sRGB's."""
+    lin = np.clip(LINEAR[np.asarray(img.convert("RGB"))] * EXPOSURE, 0, 1)
+    tone = np.asarray(s.params["tone"], dtype=np.float32)
+    out = tone[np.rint(lin * 1023).astype(np.int32)]
+    return Image.fromarray(np.clip(out * 255 + 0.5, 0, 255).astype(np.uint8))
 
 
 def jpeg(img: Image.Image) -> bytes:
