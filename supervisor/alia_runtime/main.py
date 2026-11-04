@@ -160,7 +160,7 @@ class Supervisor:
         self.web = subprocess.Popen([OVERLAY_PY, "-m", "alia_runtime.web"],
                                     env={"PYTHONPATH": "/opt/alia-runtime:/usr/local/lib/python3.13/dist-packages",
                                          "ALIA_RT_PORT": os.environ.get("ALIA_RT_PORT", "7300"), "HOME": "/root",
-                                         "ALIA_RT_CAMERA": os.environ.get("ALIA_RT_CAMERA", "scene")
+                                         "ALIA_RT_CAMERA": os.environ.get("ALIA_RT_CAMERA", "clip")
                                          if self.cart.permissions.get("camera") else "none"})
         log.info("browser mode: the page starts on port %s", os.environ.get("ALIA_RT_HOST_PORT", "7300"))
 

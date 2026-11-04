@@ -3,7 +3,10 @@ declares [permissions] camera finds the camera socket where the handheld puts it
 (/run/alia/camera.sock) and gets protocol v2 (the devkit's include/alia/camera_proto.h): modes,
 buffers (memfds: mmap them, or import them where the GPU can), PARAMS, frames, pause/resume,
 photos, typed errors. What's in the frames (ALIA_RT_CAMERA):
-  scene    (default) a test scene: colour patches, grey ramp, a moving disc, a frame counter
+  clip     (default) a short recording from the handheld's camera (camera_clip.zip: 8 s at 15 fps,
+           1024x768 JPEG; a placeholder until a raw IMX219 clip), looped
+  scene    a test scene: colour patches, grey ramp, a moving disc, a frame counter (deterministic:
+           the tests use it)
   webcam   this PC's camera: on Linux the device acart passes in (v4l2-ctl), in the browser
            mode the page's (it asks the browser when a cart opens the camera)
   none     no camera: OPEN answers UNAVAILABLE, as a handheld without one
@@ -258,6 +261,31 @@ class Picture:
         pass
 
 
+class Clip(Picture):
+    """The recording in camera_clip.zip, looped: which picture follows from the frame number (the
+    clip's 15 fps in the mode's rate), so runs are repeatable."""
+    name = "clip"
+    FPS = 15
+
+    def __init__(self):
+        super().__init__()
+        import zipfile
+        with zipfile.ZipFile(Path(__file__).with_name("camera_clip.zip")) as z:
+            self.jpegs = [z.read(n) for n in sorted(z.namelist())]
+        self.last = None   # (sensor, index) -> raw: a picture shown for several frames is made once
+
+    def frame(self, s: Sensor, t: float, n: int, cache: dict) -> np.ndarray | None:
+        import io
+        i = (n * self.FPS // s.mode["fps"]) % len(self.jpegs)
+        if not self.last or self.last[0] != (s.index, i):
+            img = Image.open(io.BytesIO(self.jpegs[i])).convert("RGB")
+            self.last = ((s.index, i), s.raw(LINEAR[np.asarray(self.fit(img, s.w, s.h))]), img)
+        return s.finish(self.last[1], n, 0.8)
+
+    def photo(self, s: Sensor, t: float) -> bytes:
+        return jpeg(self.last[2] if self.last else Image.open(__import__("io").BytesIO(self.jpegs[0])))
+
+
 class V4l2Webcam(Picture):
     """This PC's camera on Linux (the device acart passes in): v4l2-ctl streams YUYV 640x480."""
 
@@ -335,7 +363,7 @@ def memfd_with(data: bytes, name: str) -> int:
 
 class Server:
     def __init__(self):
-        self.kind = os.environ.get("ALIA_RT_CAMERA", "scene")
+        self.kind = os.environ.get("ALIA_RT_CAMERA", "clip")
         self.permission = os.environ.get("ALIA_RT_CAMERA_PERMISSION", "allow")
         self.uid = int(os.environ.get("ALIA_RT_UID", "1000"))
         self.gid = int(os.environ.get("ALIA_RT_GID", "1000"))
@@ -396,6 +424,8 @@ class Server:
         if self.source is None:
             if self.kind == "scene":
                 self.source = Scene()
+            elif self.kind == "clip":
+                self.source = Clip()
             elif self.kind == "webcam":
                 self.source = (BrowserWebcam(self) if os.environ.get("ALIA_RT_BROWSER")
                                else V4l2Webcam(os.environ.get("ALIA_RT_CAMERA_DEVICE", "/dev/video0")))
