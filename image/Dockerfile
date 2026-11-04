@@ -23,11 +23,12 @@ RUN echo 'deb http://deb.debian.org/debian trixie-backports main' > /etc/apt/sou
       libwayland-client0 libwayland-egl1 libsdl3-0 libasound2t64 pipewire-alsa \
       python3 fonts-noto-cjk \
       sway grim wtype python3-venv ca-certificates \
-      pipewire pipewire-bin wireplumber iptables squashfs-tools \
+      pipewire pipewire-bin wireplumber iptables squashfs-tools v4l-utils \
  && rm -rf /var/lib/apt/lists/*
-# the supervisor's own Python packages (the overlay draws with Pillow): a separate
+# the supervisor's own Python packages (the overlay draws with Pillow, the simulated camera
+# uses numpy; v4l-utils above: the PC's webcam): a separate
 # environment, so carts can't come to depend on what the handheld doesn't have
-RUN python3 -m venv /opt/alia-runtime/venv && /opt/alia-runtime/venv/bin/pip install -q pillow==11.3.0 websockets==15.0.1
+RUN python3 -m venv /opt/alia-runtime/venv && /opt/alia-runtime/venv/bin/pip install -q pillow==11.3.0 websockets==15.0.1 numpy==2.3.4
 # tools for `acart exec` and `acart pack` (tests, scripts, packing and signing; not carts):
 # pytest, pyflakes and cryptography in their own
 # environment that also sees the system's packages (the SDK, numpy...); on PATH only there

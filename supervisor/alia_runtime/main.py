@@ -159,7 +159,9 @@ class Supervisor:
                     log.warning("%s: the cart may have network (%s)", tool, r.stderr.strip())
         self.web = subprocess.Popen([OVERLAY_PY, "-m", "alia_runtime.web"],
                                     env={"PYTHONPATH": "/opt/alia-runtime:/usr/local/lib/python3.13/dist-packages",
-                                         "ALIA_RT_PORT": os.environ.get("ALIA_RT_PORT", "7300"), "HOME": "/root"})
+                                         "ALIA_RT_PORT": os.environ.get("ALIA_RT_PORT", "7300"), "HOME": "/root",
+                                         "ALIA_RT_CAMERA": os.environ.get("ALIA_RT_CAMERA", "scene")
+                                         if self.cart.permissions.get("camera") else "none"})
         log.info("browser mode: the page starts on port %s", os.environ.get("ALIA_RT_HOST_PORT", "7300"))
 
     def start_cart(self):
@@ -213,9 +215,11 @@ class Supervisor:
             self.signal(getattr(signal, RULES["pause"]["game_suspend"]))
             time.sleep(RULES["timing"]["suspend_grace_s"])
         self.signal(signal.SIGSTOP)
+        self.camera_say("suspend")
 
     def thaw(self):
         self.signal(signal.SIGCONT)
+        self.camera_say("resume")
         if self.cart.pause == "game":
             self.signal(getattr(signal, RULES["pause"]["game_resume"]))
 
@@ -225,6 +229,48 @@ class Supervisor:
         self.signal(signal.SIGCONT)
         self.signal(signal.SIGTERM)
         threading.Timer(RULES["timing"]["term_grace_s"], lambda: self.signal(signal.SIGKILL)).start()
+
+    # ---- the camera (camera.py: a process of its own, numpy): frozen with the cart; asks
+    # through us when --camera-permission ask
+    camera = None
+
+    def start_camera(self):
+        env = {k: v for k, v in os.environ.items() if k.startswith("ALIA_RT_")}
+        env.update(PYTHONPATH="/opt/alia-runtime", HOME="/tmp", ALIA_RT_UID=str(self.uid), ALIA_RT_GID=str(self.gid))
+        self.camera = subprocess.Popen([OVERLAY_PY, "-m", "alia_runtime.camera"], env=env, stdin=subprocess.PIPE,
+                                       stdout=subprocess.PIPE, text=True)
+
+        def read():
+            for line in self.camera.stdout:
+                self.events.put(("camera", line.strip()))
+        threading.Thread(target=read, daemon=True).start()
+        # as on the handheld, where the service is always there: the socket exists before the cart starts
+        for _ in range(100):
+            if os.path.exists(f"{RUN}/camera.sock") or self.camera.poll() is not None:
+                break
+            time.sleep(0.05)
+        else:
+            log.warning("camera: the socket didn't appear")
+
+    def camera_say(self, line: str):
+        if self.camera:
+            try:
+                self.camera.stdin.write(line + "\n")
+                self.camera.stdin.flush()
+            except (BrokenPipeError, OSError):
+                pass
+
+    def on_camera(self, line: str):
+        if line == "ask":  # the handheld's prompt: the cart frozen while the user answers
+            if self.state == "running":
+                self.freeze()
+            self.state = "permission"
+            self.show("permission")
+
+    def answer_camera(self, allow: bool):
+        self.camera_say("permission " + ("granted" if allow else "denied"))
+        log.info("camera: %s", "allowed" if allow else "not allowed")
+        self.resume_now()  # straight back into the game, no paused screen (as the handheld)
 
     # ---- the overlay (pause screen, quick menu): a surface on sway's overlay layer over the
     # frozen cart (overlay.py), running from the start; we tell it what to draw
@@ -239,7 +285,9 @@ class Supervisor:
             return
         self.showing = screen is not None
         msg = {"screen": screen, "lang": self.lang, "menu": MENU, "index": self.menu_index,
-               "pause": self.cart.pause, "keys": KEY_NAMES}
+               "pause": self.cart.pause, "keys": KEY_NAMES,
+               "title": self.cart.titles.get(self.lang.split("-")[0], self.cart.title) if hasattr(self.cart, "titles")
+               else self.cart.title}
         try:
             self.overlay.stdin.write(json.dumps(msg) + "\n")
             self.overlay.stdin.flush()
@@ -349,7 +397,10 @@ class Supervisor:
         # the system UI took this press: it doesn't reach the cart, even if the cart resumes
         # while it's still held (the A that picks "continue")
         self.consumed.add(button)
-        if self.state == "paused":
+        if self.state == "permission":
+            if button in ("east", "south"):
+                self.answer_camera(button == "east")
+        elif self.state == "paused":
             self.resume_now()
         elif self.state == "off":
             self.after_wake()
@@ -454,8 +505,7 @@ class Supervisor:
             self.start_browser_mode()
         self.start_overlay()
         if self.cart.permissions.get("camera"):  # as the handheld: the socket only for carts that declare it
-            from . import camera
-            camera.serve(f"{RUN}/camera.sock", self.uid, self.gid)
+            self.start_camera()
         self.start_cart()
         threading.Thread(target=self.read_keys, daemon=True).start()
         threading.Thread(target=self.watch_cart, daemon=True).start()
@@ -480,6 +530,8 @@ class Supervisor:
                         self.on_system_button(b)
                 self.pad_state.update(state)
                 self.update_pad()
+            elif ev[0] == "camera":
+                self.on_camera(ev[1])
             elif ev[0] == "home-held":
                 self.on_home_held(ev[1])
             elif ev[0] == "stop" and self.state != "quitting":
@@ -490,6 +542,8 @@ class Supervisor:
                 self.show(None)
                 if self.overlay:
                     self.overlay.terminate()
+                if self.camera:
+                    self.camera.terminate()
                 self.sway_proc.terminate()
                 self.pad.close()
                 return code if code >= 0 else 128 - code

@@ -9,4 +9,4 @@ entry = "main.py"
 pause = "game"          # so the test sees SIGUSR1 / SIGUSR2 too
 
 [permissions]
-camera = true           # the simulator has none yet: the cart must get the typed "unavailable"
+camera = true           # run with --camera none (ALIA_RT_CAMERA=none): the cart must get the typed "unavailable"

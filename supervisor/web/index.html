@@ -72,6 +72,9 @@ function connect() {
       img.close();
     } else if (kind === 2 && port) {
       port.postMessage(e.data.slice(1), []);
+    } else if (kind === 3) {  // the camera: "on" when a cart opens it, "off" when it closes
+      const on = new TextDecoder().decode(new Uint8Array(e.data, 1)) === "on";
+      on ? cameraOn() : cameraOff();
     }
   };
   ws.onclose = () => {
@@ -87,6 +90,33 @@ function connect() {
   };
 }
 function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+
+// ---- the camera (acart run --camera webcam --browser): this browser's camera, only while a cart
+// has the simulated camera open; its pictures go up as JPEG (the simulator turns them into the
+// handheld sensor's raw frames)
+let camStream = null, camTimer = null;
+async function cameraOn() {
+  if (camStream) return;
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+  } catch (err) {
+    status.textContent = (zh ? "相机打不开：" : "No camera: ") + err.message; return;
+  }
+  const video = document.createElement("video");
+  video.srcObject = camStream; video.muted = true; await video.play();
+  const c = document.createElement("canvas"); c.width = 640; c.height = 480;
+  const cx = c.getContext("2d");
+  camTimer = setInterval(() => {
+    if (!ws || ws.readyState !== 1 || ws.bufferedAmount > 1 << 20) return;
+    cx.drawImage(video, 0, 0, c.width, c.height);
+    c.toBlob((b) => b && b.arrayBuffer().then((a) => ws.send(a)), "image/jpeg", 0.85);
+  }, 1000 / 30);
+}
+function cameraOff() {
+  if (camTimer) clearInterval(camTimer);
+  if (camStream) camStream.getTracks().forEach((t) => t.stop());
+  camStream = null; camTimer = null;
+}
 
 // ---- keyboard: by position (KeyboardEvent.code); the simulator knows the layout
 const held = new Set();

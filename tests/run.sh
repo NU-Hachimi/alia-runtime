@@ -12,7 +12,7 @@ docker rm -f alia-rt-test > /dev/null 2>&1 || true   # a run before this one sti
 SAVE=$(mktemp -d) && chmod 777 "$SAVE"
 docker run -d --name alia-rt-test --rm --init "${UINPUT[@]}" \
     -v "$PWD/cart:/cart:ro" -v "$SAVE:/save" -e ALIA_RT_UID="$(id -u)" -e ALIA_RT_GID="$(id -g)" \
-    -e ALIA_RT_LANG=zh-CN --network none "$IMAGE" > /dev/null
+    -e ALIA_RT_LANG=zh-CN -e ALIA_RT_CAMERA=none --network none "$IMAGE" > /dev/null
 trap 'docker rm -f alia-rt-test > /dev/null 2>&1 || true' EXIT
 ctl() { docker exec alia-rt-test python3 -m alia_runtime.control "$@"; }
 for _ in $(seq 50); do grep -q gamepad "$SAVE/events.txt" 2> /dev/null && break; sleep 0.2; done

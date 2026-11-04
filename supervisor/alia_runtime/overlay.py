@@ -31,14 +31,17 @@ TEXT = {
            "menu": "快捷菜单",
            "continue": "继续游戏", "language": "语言：中文（下次启动生效）",
            "screen_off": "熄屏", "quit": "退出游戏", "hint": "上下选择 · A 确定 · B 返回",
-           "keyboard": "键盘：Home = {home}　A = {east}　B = {south}　方向 = {dpad}"},
+           "keyboard": "键盘：Home = {home}　A = {east}　B = {south}　方向 = {dpad}",
+           "permission": ("允许“{title}”使用相机吗？", "A 允许　B 不允许（模拟器里不保存，下次启动再问）")},
     "en": {"home": ("Home (simulated)", "The game is suspended. Press Home or A to return."),
            "paused": ("Paused", "Press any button to continue"),
            "off": ("", "Screen off (simulated): press any button"),
            "menu": "Quick menu",
            "continue": "Continue", "language": "Language: English (on the next start)",
            "screen_off": "Screen off", "quit": "Quit game", "hint": "Up/Down · A select · B back",
-           "keyboard": "Keyboard: Home = {home}   A = {east}   B = {south}   D-pad = {dpad}"},
+           "keyboard": "Keyboard: Home = {home}   A = {east}   B = {south}   D-pad = {dpad}",
+           "permission": ("Allow “{title}” to use the camera?",
+                          "A Allow   B Don't allow   (not kept in the simulator: asked again next start)")},
 }
 
 
@@ -64,6 +67,12 @@ def render(size, msg: dict | None) -> Image.Image:
                                     fill=(255, 196, 64, 255))
             d.text((w / 2, y), t[item], font=small, anchor="mm", fill=(20, 20, 20, 255) if on else (230, 232, 240, 255))
         d.text((w / 2, h * 0.75), t["hint"], font=small, anchor="mm", fill=(110, 116, 132, 255))
+    elif screen == "permission":   # the handheld's permission prompt (--camera-permission ask)
+        title, line = t["permission"]
+        d.rounded_rectangle((w * 0.15, h * 0.33, w * 0.85, h * 0.67), radius=h // 40, fill=(30, 33, 41, 255))
+        d.text((w / 2, h * 0.44), title.format(title=msg.get("title", "")), font=ImageFont.truetype(FONT, h // 22),
+               anchor="mm", fill=(230, 232, 240, 255))
+        d.text((w / 2, h * 0.56), line, font=small, anchor="mm", fill=(200, 200, 200, 255))
     else:
         title, line = t[screen]
         if title:

@@ -130,9 +130,17 @@ PipeWire ◄── socket ─────────────── 卡带�
 
 ## 8.1 相机（2026-11-04）
 
-掌机上的相机接口（协议 v2：开发包的 `include/alia/camera_proto.h`、`docs/camera.md`；客户端 `alia/camera.h`、`alia.camera`）：清单里 `[permissions] camera = true` 的卡带在 `/run/alia/camera.sock` 找到相机的 socket，没声明的找不到。掌机上第一次打开时系统问用户（游戏挂起），回答存在系统的权限存储里，设置里能改；卡带拿到的是原始 8 位拜耳帧、每帧的颜色参数，按参考着色器（`camera/alia_camera.glsl`）自己画。
+掌机上的相机接口（协议 v2：开发包的 `include/alia/camera_proto.h`、`docs/camera.md`；客户端 `alia/camera.h`、`alia.camera`）：清单里 `[permissions] camera = true` 的卡带在 `/run/alia/camera.sock` 找到相机的 socket，没声明的找不到。卡带拿到原始 8 位拜耳帧、每帧的颜色参数，按参考着色器（`camera/alia_camera.glsl`）自己画。
 
-模拟器里**现在还没有相机**：声明了的卡带照样找到 socket，`supervisor/alia_runtime/camera.py` 按协议回 SERVER_HELLO，OPEN 回 ERROR UNAVAILABLE（就是掌机没装相机时的回答），卡带"没有相机"的那条路在电脑上照样能测。测试卡带检查这个回答（`tests/run.sh`）。以后的真相机见 §11。
+模拟器里同一个 socket、同一套协议（`supervisor/alia_runtime/camera.py`，单独一个进程，用 supervisor 自己环境里的 numpy 和 Pillow，卡带看不到）：模式（掌机的 640×480 @ 60、1640×1232 全视野 @ 30、1920×1080 中心裁切 @ 30，按掌机的规则挑）、缓冲区（memfd：能 mmap；能导入 GPU 的环境照导）、PARAMS、帧、挂起时 PAUSED 和恢复时新的 MODE … RESUMED、拍照（暂停、新模式、恢复，JPEG 放在 memfd 里，视野和当前模式一样）、带类型的错误。
+
+- **画面从哪来**（`acart run --camera`）：
+  - `scene`（默认）：一张测试场景（24 色色卡、灰阶、标题），按掌机全分辨率 3280×2464 画一次，各模式看各自的那一块（裁切、合并和掌机一样），加一个来回移动的圆和帧计数。确定性，不需要摄像头，CI 用它。
+  - `webcam`：这台电脑的摄像头。Linux：acart 把 `/dev/video0`（`--camera-device`）交给容器，`v4l2-ctl` 取 YUYV 640×480；浏览器模式（Windows、macOS，Docker Desktop 拿不到摄像头）：卡带打开相机时页面才向浏览器要摄像头，关掉就放开，画面以 JPEG 经 WebSocket 送上来。
+  - `none`：没有相机，OPEN 回 UNAVAILABLE（掌机没装相机时的回答），测卡带"没有相机"的那条路。
+- **怎么变成原始帧**：把卡带的颜色步骤倒过来走：画面（sRGB）→ 线性 → 颜色矩阵的逆 → 除以白平衡和颜色暗角、亮度暗角 → 黑电平 → 噪声（散粒加读出，大致是 IMX219 中等增益）→ 拜耳（BGGR，和掌机现在的一样）。用的是 IMX219 的调校数据在 5000 K 光下的那一份（`camera_imx219.json`，由 alia-pad 的 `daemons/camera/tools/export_sim.cpp` 用掌机服务同一份代码导出），所以卡带拿到的 PARAMS 和掌机在同样的光下发的一模一样，按参考着色器画出来就是原来的画面（`tests/camera.sh` 在电脑上把一帧按这些步骤显影，检查灰块还是灰的）。
+- **权限**（`--camera-permission`）：`allow`（默认）；`ask`：像掌机第一次那样询问，卡带先收到 PENDING，冻结着，浮层上问"允许……使用相机吗？"，A 允许、B 不允许，回答以后直接继续（不显示暂停画面）；模拟器不保存回答，下次启动再问；`deny`：OPEN 回 DENIED。
+- **还没有的**：真机录的 IMX219 原始片段（用户挑一个不涉及隐私的场景录了以后，作为第四种来源，或者替换默认的测试场景）；摄像头模式下画面的颜色就是摄像头自己处理过的颜色，不是 IMX219 的。
 
 ## 9. Docker 和权限
 
@@ -154,7 +162,7 @@ tests/            在 CI 里跑一张测试卡带：启动、按键、挂起、�
 
 1. **第一期（Linux，窗口模式）**：镜像、supervisor、键盘和真手柄、挂起和快捷菜单、声音；alia-sdk 0.2.0 加 `acart run`；alia-engine 的 `alia run` 改成调用它。先做一个最小验证：容器里的嵌套 sway 能在电脑的 Wayland 上开窗、用 GPU 渲染、uinput 手柄能被卡带的 SDL 看到。
 2. **第二期（浏览器模式）**：WebRTC 画面和声音、Gamepad API、Mac 和 Windows 的说明。
-3. **以后**：相机（掌机的 C8）：同一个 socket 和协议，帧来自录好的 IMX219 原始片段（时间戳、序号确定，CI 和 `acart exec` 无头也能跑），或者把电脑 / 浏览器摄像头的画面重新马赛克化成同样的拜耳格式；缓冲区用 memfd（能 mmap，dmabuf 导入不了时卡带退回上传纹理）；模拟权限询问。掌机屏幕定了改默认分辨率；外置手柄的规则随 alia-inputd 一起落地；也许支持直接运行 `.acart`（容器里用 squashfuse 挂载）。
+3. **以后**：相机的真机原始片段（§8.1）；掌机屏幕定了改默认分辨率；外置手柄的规则随 alia-inputd 一起落地；也许支持直接运行 `.acart`（容器里用 squashfuse 挂载）。
 
 ## 12. 待定
 

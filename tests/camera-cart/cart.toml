@@ -1,0 +1,14 @@
+[cart]
+id      = "pad.alia.runtime.cameratest"
+title   = "alia-runtime camera test"
+version = "0.0.1"
+
+[runtime]
+type  = "python"
+entry = "main.py"
+
+[permissions]
+camera = true
+
+[save]
+quota_kb = 65536

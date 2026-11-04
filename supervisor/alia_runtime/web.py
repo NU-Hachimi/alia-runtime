@@ -14,6 +14,7 @@ import os
 import socket
 import subprocess
 import threading
+import time
 from http import HTTPStatus
 from pathlib import Path
 
@@ -110,14 +111,54 @@ def _offer(queue: asyncio.Queue, item: bytes, limit: int = 2):
     queue.put_nowait(item)
 
 
+# The camera (camera.py, ALIA_RT_CAMERA=webcam in the browser mode): it says "on" / "off" over
+# FEED when a cart opens / closes it; the page then switches the browser's camera on or off and
+# sends its pictures up (binary messages: JPEG), which go on to camera.py.
+FEED = "/run/alia-rt/camera-feed.sock"
+feed: socket.socket | None = None
+camera_on = False
+
+
+def feed_connect(loop):
+    """Keep a connection to camera.py's feed; tell the pages what it says."""
+    global feed, camera_on
+    while True:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        try:
+            s.connect(FEED)
+        except OSError:
+            s.close()
+            time.sleep(0.5)
+            continue
+        feed = s
+        while True:
+            try:
+                msg = s.recv(64)
+            except OSError:
+                msg = b""
+            if not msg:
+                break
+            camera_on = msg == b"on"
+            asyncio.run_coroutine_threadsafe(send(b"\x03" + msg), loop)
+        feed = None
+        s.close()
+
+
 async def handler(ws):
     clients.add(ws)
+    if camera_on:
+        await ws.send(b"\x03on")
     try:
         async for text in ws:
             if isinstance(text, str):
                 try:
                     on_message(text)
                 except (ValueError, OSError):
+                    pass
+            elif feed is not None and camera_on:  # a picture from the page's camera
+                try:
+                    feed.send(text)
+                except OSError:
                     pass
     except websockets.ConnectionClosed:
         pass
@@ -165,7 +206,9 @@ async def main():
     threading.Thread(target=pictures, args=(loop, frames), daemon=True).start()
     if os.path.exists(f"{RUN}/pipewire-0"):
         threading.Thread(target=sound, args=(loop, audio), daemon=True).start()
-    async with serve(handler, "0.0.0.0", PORT, process_request=page, max_size=2 ** 16, compression=None):
+    if os.environ.get("ALIA_RT_CAMERA") == "webcam":
+        threading.Thread(target=feed_connect, args=(loop,), daemon=True).start()
+    async with serve(handler, "0.0.0.0", PORT, process_request=page, max_size=2 ** 20, compression=None):
         await broadcast(frames, audio)
 
 
